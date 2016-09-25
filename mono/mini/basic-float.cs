@@ -26,14 +26,14 @@ using System.Reflection;
 /* A comparison made to same variable. */
 #pragma warning disable 1718
 
-#if MOBILE
+#if __MOBILE__
 class FloatTests
 #else
 class Tests
 #endif
 {
 
-#if !MOBILE
+#if !__MOBILE__
 	public static int Main (string[] args) {
 		return TestDriver.RunTests (typeof (Tests), args);
 	}
@@ -812,5 +812,13 @@ class Tests
 		short b = (short)a;
 		return b == 127 ? 0 : 1;
 	}
+
+	public static int test_10_rconv_to_u8 () {
+		ulong l = 10;
+		float f = (float)l;
+		l = (ulong)f;
+		return (int)l;
+	}
+
 }
 

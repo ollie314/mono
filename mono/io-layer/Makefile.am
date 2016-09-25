@@ -12,23 +12,18 @@ libwapiincludedir = $(includedir)/mono-$(API_VER)/mono/io-layer
 
 OTHER_H = \
 	access.h	\
-	collection.h	\
 	context.h	\
 	error.h		\
-	events.h	\
-	handles.h	\
 	io.h		\
+	io-trace.h	\
 	io-layer.h	\
 	io-portability.h	\
 	macros.h	\
 	messages.h	\
-	mutexes.h	\
 	processes.h	\
 	security.h	\
-	semaphores.h	\
 	sockets.h	\
 	status.h	\
-	threads.h	\
 	timefuncs.h	\
 	types.h		\
 	uglify.h	\
@@ -39,18 +34,10 @@ OTHER_H = \
 
 OTHER_SRC = \
 	access.h		\
-	collection.c		\
-	collection.h		\
 	context.c		\
 	context.h		\
 	error.c			\
 	error.h			\
-	events.c		\
-	events.h		\
-	event-private.h		\
-	handles.c		\
-	handles.h		\
-	handles-private.h	\
 	io.c			\
 	io.h			\
 	io-portability.c	\
@@ -61,29 +48,17 @@ OTHER_SRC = \
 	macros.h		\
 	messages.c		\
 	messages.h		\
-	misc.c			\
-	misc-private.h		\
-	mutexes.c		\
-	mutexes.h		\
-	mutex-private.h		\
 	posix.c			\
 	processes.c		\
 	processes.h		\
 	process-private.h	\
 	security.c		\
 	security.h		\
-	semaphores.c		\
-	semaphores.h		\
-	semaphore-private.h	\
-	shared.c		\
-	shared.h		\
 	sockets.c		\
 	sockets.h		\
 	socket-private.h	\
 	socket-wrappers.h	\
 	status.h		\
-	threads.h		\
-	thread-private.h	\
 	timefuncs.c		\
 	timefuncs.h		\
 	timefuncs-private.h	\
@@ -97,7 +72,7 @@ OTHER_SRC = \
 	wapi_glob.c		\
 	wapi.h			\
 	wapi-private.h		\
-	wthreads.c
+	wapi.c
 
 
 WINDOWS_H = \

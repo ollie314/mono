@@ -55,8 +55,8 @@ namespace System.Reflection.Emit
 	{
 #pragma warning disable 169		
 		#region Sync with reflection.h
-		private string tname;
-		private string nspace;
+		private string tname; // name in internal form
+		private string nspace; // namespace in internal form
 		private Type parent;
 		private Type nesting_type;
 		internal Type[] interfaces;
@@ -81,7 +81,7 @@ namespace System.Reflection.Emit
 		#endregion
 #pragma warning restore 169		
 		
-		string fullname;
+		TypeName fullname;
 		bool createTypeCalled;
 		private Type underlying_type;
 
@@ -93,14 +93,8 @@ namespace System.Reflection.Emit
 		}
 		
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern void setup_internal_class (TypeBuilder tb);
+		private extern void setup_internal_class ();
 		
-		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern void create_internal_class (TypeBuilder tb);
-		
-		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern void setup_generic_class ();
-
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
 		private extern void create_generic_class ();
 
@@ -113,16 +107,17 @@ namespace System.Reflection.Emit
 			this.attrs = attr;
 			this.class_size = UnspecifiedTypeSize;
 			this.table_idx = table_idx;
-			fullname = this.tname = table_idx == 1 ? "<Module>" : "type_" + table_idx.ToString ();
+			this.tname = table_idx == 1 ? "<Module>" : "type_" + table_idx.ToString ();
 			this.nspace = String.Empty;
+			this.fullname = TypeIdentifiers.WithoutEscape(this.tname);
 			pmodule = mb;
-			setup_internal_class (this);
+			setup_internal_class ();
 		}
 
 		internal TypeBuilder (ModuleBuilder mb, string name, TypeAttributes attr, Type parent, Type[] interfaces, PackingSize packing_size, int type_size, Type nesting_type)
 		{
 			int sep_index;
-			this.parent = parent;
+			this.parent = ResolveUserType (parent);
 			this.attrs = attr;
 			this.class_size = type_size;
 			this.packing_size = packing_size;
@@ -152,7 +147,7 @@ namespace System.Reflection.Emit
 
 			// skip .<Module> ?
 			table_idx = mb.get_next_table_index (this, 0x02, true);
-			setup_internal_class (this);
+			setup_internal_class ();
 			fullname = GetFullName ();
 		}
 
@@ -162,7 +157,7 @@ namespace System.Reflection.Emit
 
 		public override string AssemblyQualifiedName {
 			get {
-				return fullname + ", " + Assembly.FullName;
+				return fullname.DisplayName + ", " + Assembly.FullName;
 			}
 		}
 
@@ -209,18 +204,19 @@ namespace System.Reflection.Emit
 			}
 		}
 
-		string GetFullName ()
+		TypeName GetFullName ()
 		{
+			TypeIdentifier ident = TypeIdentifiers.FromInternal (tname);
 			if (nesting_type != null)
-				return String.Concat (nesting_type.FullName, "+", tname);
+				return TypeNames.FromDisplay (nesting_type.FullName).NestedName (ident);
 			if ((nspace != null) && (nspace.Length > 0))
-				return String.Concat (nspace, ".", tname);
-			return tname;
+				return TypeIdentifiers.FromInternal (nspace, ident);
+			return ident;
 		}
 	
 		public override string FullName {
 			get {
-				return fullname;
+				return fullname.DisplayName;
 			}
 		}
 	
@@ -257,7 +253,7 @@ namespace System.Reflection.Emit
 
 		public void AddDeclarativeSecurity (SecurityAction action, PermissionSet pset)
 		{
-#if !NET_2_1
+#if !MOBILE
 			if (pset == null)
 				throw new ArgumentNullException ("pset");
 			if ((action == SecurityAction.RequestMinimum) ||
@@ -446,6 +442,12 @@ namespace System.Reflection.Emit
 		public TypeBuilder DefineNestedType (string name, TypeAttributes attr, Type parent, PackingSize packSize)
 		{
 			return DefineNestedType (name, attr, parent, null, packSize, UnspecifiedTypeSize);
+		}
+
+		public TypeBuilder DefineNestedType (string name, TypeAttributes attr, Type parent, PackingSize packSize,
+			                             int typeSize)
+		{
+			return DefineNestedType (name, attr, parent, null, packSize, typeSize);
 		}
 
 		[ComVisible (true)]
@@ -664,7 +666,6 @@ namespace System.Reflection.Emit
 				fields = new FieldBuilder [1];
 				fields [0] = res;
 				num_fields ++;
-				create_internal_class (this);
 			}
 
 			if (IsEnum) {
@@ -720,7 +721,7 @@ namespace System.Reflection.Emit
 		}
 
 		[MethodImplAttribute(MethodImplOptions.InternalCall)]
-		private extern TypeInfo create_runtime_class (TypeBuilder tb);
+		private extern TypeInfo create_runtime_class ();
 
 		private bool is_nested_in (Type t)
 		{
@@ -824,10 +825,52 @@ namespace System.Reflection.Emit
 					ctor.fixup ();
 			}
 
-			created = create_runtime_class (this);
+			ResolveUserTypes ();
+
+			created = create_runtime_class ();
 			if (created != null)
 				return created;
 			return this;
+		}
+
+		void ResolveUserTypes () {
+			parent = ResolveUserType (parent);
+			ResolveUserTypes (interfaces);
+			if (fields != null) {
+				foreach (var fb in fields) {
+					if (fb != null)
+						fb.ResolveUserTypes ();
+				}
+			}
+			if (methods != null) {
+				foreach (var mb in methods) {
+					if (mb != null)
+						mb.ResolveUserTypes ();
+				}
+			}
+			if (ctors != null) {
+				foreach (var cb in ctors) {
+					if (cb != null)
+						cb.ResolveUserTypes ();
+				}
+			}
+		}
+
+		static internal void ResolveUserTypes (Type[] types) {
+			if (types != null)
+				for (int i = 0; i < types.Length; ++i)
+					types [i] = ResolveUserType (types [i]);
+		}
+
+		static internal Type ResolveUserType (Type t) {
+			if (t != null && ((t.GetType ().Assembly != typeof (int).Assembly) || (t is TypeDelegator))) {
+				t = t.UnderlyingSystemType;
+				if (t != null && ((t.GetType ().Assembly != typeof (int).Assembly) || (t is TypeDelegator)))
+					throw new NotSupportedException ("User defined subclasses of System.Type are not yet supported.");
+				return t;
+			} else {
+				return t;
+			}
 		}
 
 		internal void GenerateDebugInfo (ISymbolWriter symbolWriter)
@@ -1565,7 +1608,8 @@ namespace System.Reflection.Emit
 			check_not_created ();
 
 			string typeName = "$ArrayType$" + size;
-			Type datablobtype = pmodule.GetRegisteredType (fullname + "+" + typeName);
+			TypeIdentifier ident = TypeIdentifiers.WithoutEscape (typeName);
+			Type datablobtype = pmodule.GetRegisteredType (fullname.NestedName(ident));
 			if (datablobtype == null) {
 				TypeBuilder tb = DefineNestedType (typeName,
 					TypeAttributes.NestedPrivate|TypeAttributes.ExplicitLayout|TypeAttributes.Sealed,
@@ -1597,9 +1641,10 @@ namespace System.Reflection.Emit
 			} else {
 				this.parent = parent;
 			}
+			this.parent = ResolveUserType (this.parent);
 
 			// will just set the parent-related bits if called a second time
-			setup_internal_class (this);
+			setup_internal_class ();
 		}
 
 		internal int get_next_table_index (object obj, int table, bool inc) {
@@ -1757,8 +1802,6 @@ namespace System.Reflection.Emit
 				throw new ArgumentNullException ("names");
 			if (names.Length == 0)
 				throw new ArgumentException ("names");
-
-			setup_generic_class ();
 
 			generic_params = new GenericTypeParameterBuilder [names.Length];
 			for (int i = 0; i < names.Length; i++) {

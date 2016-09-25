@@ -36,7 +36,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
-#if NET_2_1
+#if MOBILE
 using System.IO.IsolatedStorage;
 #endif
 
@@ -50,6 +50,8 @@ namespace System.IO
 
 		public static readonly IntPtr
 			InvalidHandle = (IntPtr)(-1L);
+
+		static bool dump_handles = Environment.GetEnvironmentVariable ("MONO_DUMP_HANDLES_ON_ERROR_TOO_MANY_OPEN_FILES") != null;
 
 		// error methods
 		public static Exception GetException (MonoIOError error)
@@ -89,6 +91,8 @@ namespace System.IO
 				return new FileNotFoundException (message, path);
 
 			case MonoIOError.ERROR_TOO_MANY_OPEN_FILES:
+				if (dump_handles)
+					DumpHandles ();
 				return new IOException ("Too many open files", unchecked((int)0x80070000) | (int)error);
 				
 			case MonoIOError.ERROR_PATH_NOT_FOUND:
@@ -104,7 +108,7 @@ namespace System.IO
 				return new IOException (message, unchecked((int)0x80070000) | (int)error);
 			case MonoIOError.ERROR_INVALID_DRIVE:
 				message = String.Format ("Could not find the drive  '{0}'. The drive might not be ready or might not be mapped.", path);
-#if !NET_2_1
+#if !MOBILE
 				return new DriveNotFoundException (message);
 #else
 				return new IOException (message, unchecked((int)0x80070000) | (int)error);
@@ -150,6 +154,10 @@ namespace System.IO
 				
 			case MonoIOError.ERROR_NOT_SAME_DEVICE:
 				message = "Source and destination are not on the same device";
+				return new IOException (message, unchecked((int)0x80070000) | (int)error);
+
+			case MonoIOError.ERROR_DIRECTORY:
+				message = "The directory name is invalid";
 				return new IOException (message, unchecked((int)0x80070000) | (int)error);
 				
 			default:
@@ -572,11 +580,11 @@ namespace System.IO
 		// pipe handles
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		public extern static bool CreatePipe (out IntPtr read_handle, out IntPtr write_handle);
+		public extern static bool CreatePipe (out IntPtr read_handle, out IntPtr write_handle, out MonoIOError error);
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
 		public extern static bool DuplicateHandle (IntPtr source_process_handle, IntPtr source_handle,
-			IntPtr target_process_handle, out IntPtr target_handle, int access, int inherit, int options);
+			IntPtr target_process_handle, out IntPtr target_handle, int access, int inherit, int options, out MonoIOError error);
 
 		// path characters
 
@@ -601,7 +609,7 @@ namespace System.IO
 		}
 
 		[MethodImplAttribute (MethodImplOptions.InternalCall)]
-		public extern static int GetTempPath(out string path);
+		extern static void DumpHandles ();
 	}
 }
 

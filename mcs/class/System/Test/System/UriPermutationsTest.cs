@@ -62,13 +62,7 @@ namespace MonoTests.System {
 		public void Setup()
 		{
 			StringTester.CreateMode = createMode;
-#if NET_4_5
 			StringTester.Location = location + "NET_4_5";
-#elif NET_4_0
-			StringTester.Location = location + "NET_4_0";
-#else
-			StringTester.Location = location + "NET_2_0";
-#endif
 		}
 
 		[TearDown]

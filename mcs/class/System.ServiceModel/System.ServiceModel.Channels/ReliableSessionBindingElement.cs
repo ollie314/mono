@@ -69,7 +69,7 @@ namespace System.ServiceModel.Channels
 			throw new NotImplementedException ();
 		}
 		
-#if !NET_2_1
+#if !MOBILE
 		[MonoTODO]
 		public override IChannelListener<TChannel> BuildChannelListener<TChannel> (BindingContext context)
 		{
@@ -99,7 +99,7 @@ namespace System.ServiceModel.Channels
 			throw new NotImplementedException ();
 		}
 		
-#if !MOBILE
+#if !MOBILE && !XAMMAC_4_5
 		void IPolicyExportExtension.ExportPolicy (MetadataExporter exporter, PolicyConversionContext context)
 		{
 			throw new NotImplementedException ();

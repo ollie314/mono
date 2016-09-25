@@ -12,6 +12,9 @@ using System.Reflection;
 using System.Reflection.Emit;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
+using System.Runtime.ExceptionServices;
+using System.Linq;
 
 using NUnit.Framework;
 
@@ -477,6 +480,112 @@ namespace MonoTests.System.Reflection.Emit
 			public string Name;
 		}
 
+		class ExceptionHandling_Test_Support
+		{
+			public static Exception Caught;
+			public static string CaughtStackTrace;
+
+			public static void ThrowMe ()
+			{
+				Caught = null;
+				CaughtStackTrace = null;
+				throw new Exception("test");
+			}
+
+			public static void Handler (Exception e)
+			{
+				Caught = e;
+				CaughtStackTrace = e.StackTrace.ToString ();
+			}
+		}
+
+		[Test]
+		public void ExceptionHandling ()
+		{
+			var method = new DynamicMethod ("", typeof(void), new[] { typeof(int) }, typeof (DynamicMethodTest));
+			var ig = method.GetILGenerator ();
+
+			ig.BeginExceptionBlock();
+			ig.Emit(OpCodes.Call, typeof(ExceptionHandling_Test_Support).GetMethod("ThrowMe"));
+
+			ig.BeginCatchBlock(typeof(Exception));
+			ig.Emit(OpCodes.Call, typeof(ExceptionHandling_Test_Support).GetMethod("Handler"));
+			ig.EndExceptionBlock();
+
+			ig.Emit(OpCodes.Ret);
+
+			var invoke = (Action<int>) method.CreateDelegate (typeof(Action<int>));
+			invoke (456324);
+
+			Assert.IsNotNull (ExceptionHandling_Test_Support.Caught, "#1");
+
+			var lines = ExceptionHandling_Test_Support.CaughtStackTrace.Split (new[] { Environment.NewLine }, StringSplitOptions.None);
+			lines = lines.Where (l => !l.StartsWith ("[")).ToArray ();
+			Assert.AreEqual (2, lines.Length, "#2");
+
+			var st = new StackTrace (ExceptionHandling_Test_Support.Caught, 0, true);
+
+			// Caught stack trace when dynamic method is gone
+			Assert.AreEqual (ExceptionHandling_Test_Support.CaughtStackTrace, st.ToString (), "#3");
+
+			// Catch handler stack trace inside dynamic method match
+			Assert.AreEqual (ExceptionHandling_Test_Support.Caught.StackTrace, st.ToString (), "#4");
+		}
+
+		class ExceptionHandlingWithExceptionDispatchInfo_Test_Support
+		{
+			public static Exception Caught;
+			public static string CaughtStackTrace;
+
+			public static void ThrowMe ()
+			{
+				Caught = null;
+				CaughtStackTrace = null;
+
+				Exception e;
+				try {
+					throw new Exception("test");
+				} catch (Exception e2) {
+					e = e2;
+				}
+
+				var edi = ExceptionDispatchInfo.Capture(e);
+
+				edi.Throw();
+			}
+
+			public static void Handler (Exception e)
+			{
+				var lines = e.StackTrace.Split (new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+				// Ignore Metadata
+				lines = lines.Where (l => !l.StartsWith ("[")).ToArray ();
+
+				Assert.AreEqual (5, lines.Length, "#1");
+				Assert.IsTrue (lines [1].Contains ("---"), "#2");
+			}
+		}
+
+		[Test]
+		public void ExceptionHandlingWithExceptionDispatchInfo ()
+		{
+			var method = new DynamicMethod ("", typeof(void), new[] { typeof(int) }, typeof (DynamicMethodTest));
+			var ig = method.GetILGenerator ();
+
+			ig.BeginExceptionBlock();
+			ig.Emit(OpCodes.Call, typeof(ExceptionHandlingWithExceptionDispatchInfo_Test_Support).GetMethod("ThrowMe"));
+
+			ig.BeginCatchBlock(typeof(Exception));
+			ig.Emit(OpCodes.Call, typeof(ExceptionHandlingWithExceptionDispatchInfo_Test_Support).GetMethod("Handler"));
+			ig.EndExceptionBlock();
+
+			ig.Emit(OpCodes.Ret);
+
+			var invoke = (Action<int>) method.CreateDelegate (typeof(Action<int>));
+			invoke (444);
+		}
+
+#if !MONODROID
+		// RUNTIME: crash
 		[Test]
 		public void TypedRef ()
 		{
@@ -508,6 +617,7 @@ namespace MonoTests.System.Reflection.Emit
 		{
 			Assert.AreEqual (typeof (TypedRefTarget), TypedReference.GetTargetType (tr));
 		}
+#endif
 	}
 }
 

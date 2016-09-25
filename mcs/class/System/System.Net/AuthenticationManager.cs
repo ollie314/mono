@@ -51,7 +51,7 @@ namespace System.Net
 					return;
 				
 				modules = new ArrayList ();
-#if NET_2_1
+#if MOBILE
 				modules.Add (new NtlmClient ());
 				modules.Add (new DigestClient ());
 				modules.Add (new BasicClient ());
@@ -106,6 +106,13 @@ namespace System.Net
 			}
 		}
 
+		[MonoTODO]
+		internal static bool OSSupportsExtendedProtection {
+			get {
+				return false;
+			}
+		}
+
 		internal static void Clear ()
 		{
 			EnsureModules ();
@@ -136,7 +143,7 @@ namespace System.Net
 					if (auth == null)
 						continue;
 
-					auth.Module = mod;
+					auth.ModuleAuthenticationType = mod.AuthenticationType;
 					return auth;
 				}
 			}
@@ -159,7 +166,7 @@ namespace System.Net
 					if (auth == null)
 						continue;
 
-					auth.Module = mod;
+					auth.ModuleAuthenticationType = mod.AuthenticationType;
 					return auth;
 				}
 			}

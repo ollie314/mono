@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using SharpCompress.Common;
 
 namespace SharpCompress.Archive
@@ -81,10 +82,14 @@ namespace SharpCompress.Archive
             {
                 key = key.Substring(1);
             }
+            // .NET allows duplicate entries when saving and loading Zip files.
+            // The following lines are disabled from upstream SharpCompress to allow this.
+#if ZIP_ALLOW_DUPLICATE_KEYS
             if (DoesKeyMatchExisting(key))
             {
                 throw new ArchiveException("Cannot add entry with duplicate key: " + key);
             }
+#endif
             var entry = CreateEntry(key, source, size, modified, closeStream);
             newEntries.Add(entry);
             RebuildModifiedCollection();
@@ -100,16 +105,17 @@ namespace SharpCompress.Archive
                 {
                     p = p.Substring(1);
                 }
-                return string.Equals(p, key, StringComparison.OrdinalIgnoreCase);
+                if (string.Equals(p, key, StringComparison.OrdinalIgnoreCase))
+                    return true;
             }
             return false;
         }
 
-        public void SaveTo(Stream stream, CompressionInfo compressionType)
+        public void SaveTo(Stream stream, CompressionInfo compressionType, Encoding encoding = null)
         {
             //reset streams of new entries
             newEntries.Cast<IWritableArchiveEntry>().ForEach(x => x.Stream.Seek(0, SeekOrigin.Begin));
-            SaveTo(stream, compressionType, OldEntries, newEntries);
+            SaveTo(stream, compressionType, encoding ?? ArchiveEncoding.Default, OldEntries, newEntries);
         }
 
         protected TEntry CreateEntry(string key, Stream source, long size, DateTime? modified,
@@ -125,7 +131,7 @@ namespace SharpCompress.Archive
         protected abstract TEntry CreateEntryInternal(string key, Stream source, long size, DateTime? modified,
                                               bool closeStream);
 
-        protected abstract void SaveTo(Stream stream, CompressionInfo compressionType,
+        protected abstract void SaveTo(Stream stream, CompressionInfo compressionType, Encoding encoding,
                                        IEnumerable<TEntry> oldEntries, IEnumerable<TEntry> newEntries);
 
         public override void Dispose()

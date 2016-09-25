@@ -124,7 +124,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			IsolatedStorageFile isf = IsolatedStorageFile.GetUserStoreForAssembly ();
 			Assert.AreEqual (Int64.MaxValue, isf.MaximumSize, "MaximumSize");
 			Assert.AreEqual (IsolatedStorageScope.User | IsolatedStorageScope.Assembly, isf.Scope, "Scope");
-#if !NET_2_1
+#if !MOBILE
 			Assert.IsTrue ((isf.AssemblyIdentity is Url), "AssemblyIdentity");
 			// note: mono transforms the CodeBase into uppercase
 			// for net 1.1 which uses file:// and not file:///
@@ -157,7 +157,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			IsolatedStorageFile isf = IsolatedStorageFile.GetUserStoreForDomain ();
 			Assert.AreEqual (Int64.MaxValue, isf.MaximumSize, "MaximumSize");
 			Assert.AreEqual (IsolatedStorageScope.User | IsolatedStorageScope.Domain | IsolatedStorageScope.Assembly, isf.Scope, "Scope");
-#if !NET_2_1
+#if !MOBILE
 			Assert.IsTrue ((isf.AssemblyIdentity is Url), "AssemblyIdentity");
 			// note: mono transforms the CodeBase into uppercase
 			// for net 1.1 which uses file:// and not file:///
@@ -198,7 +198,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		{
 			IsolatedStorageFile isf = IsolatedStorageFile.GetUserStoreForApplication ();
 			Assert.AreEqual (Int64.MaxValue, isf.MaximumSize, "MaximumSize");
-#if !NET_2_1
+#if !MOBILE
 			Assert.AreEqual (IsolatedStorageScope.User | IsolatedStorageScope.Assembly, isf.Scope, "Scope");
 			Assert.IsTrue ((isf.AssemblyIdentity is Url), "AssemblyIdentity");
 			Assert.IsTrue ((isf.AssemblyIdentity.ToString ().IndexOf (Assembly.GetExecutingAssembly ().CodeBase) > 0), "Url");
@@ -206,7 +206,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			Assert.IsTrue ((isf.CurrentSize >= 0), "CurrentSize");
 		}
 		
-#if !NET_2_1
+#if !MOBILE
 		[Test]
 		[ExpectedException (typeof (IsolatedStorageException))]
 		public void GetUserStoreForApplication_AssemblyIdentity ()
@@ -224,7 +224,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		}
 #endif
 
-#if NET_4_0
 		// This is supposed to be working only in SL.
 		[Test]
 		[ExpectedException (typeof (NotSupportedException))]
@@ -232,7 +231,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		{
 			IsolatedStorageFile.GetUserStoreForSite ();
 		}
-#endif
 
 		[Test]
 		public void GetStore_Domain_Zone ()
@@ -240,7 +238,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			IsolatedStorageScope scope = IsolatedStorageScope.User | IsolatedStorageScope.Domain | IsolatedStorageScope.Assembly;
 			IsolatedStorageFile isf = IsolatedStorageFile.GetStore (scope, typeof (Zone), typeof (Zone));
 			Assert.AreEqual (Int64.MaxValue, isf.MaximumSize, "MaximumSize");
-#if !NET_2_1
+#if !MOBILE
 			Assert.AreEqual (IsolatedStorageScope.User | IsolatedStorageScope.Domain | IsolatedStorageScope.Assembly, isf.Scope, "Scope");
 			Assert.IsTrue ((isf.AssemblyIdentity is Zone), "AssemblyIdentity");
 			Assert.IsTrue ((isf.AssemblyIdentity.ToString ().IndexOf ("MyComputer") > 0), "Zone - Assembly");
@@ -267,7 +265,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			IsolatedStorageFile isf = IsolatedStorageFile.GetStore (scope, typeof (StrongName), typeof (Url));
 			Assert.AreEqual (Int64.MaxValue, isf.MaximumSize, "MaximumSize");
 			Assert.AreEqual (scope, isf.Scope, "Scope");
-#if !NET_2_1
+#if !MOBILE
 			Assert.IsTrue ((isf.AssemblyIdentity is Url), "AssemblyIdentity");
 			// note: mono transforms the CodeBase into uppercase
 			// for net 1.1 which uses file:// and not file:///
@@ -363,7 +361,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 
 			// Maximum size for Internet isn't (by default) Int64.MaxValue
 			Assert.AreEqual (scope, isf.Scope, "Scope");
-#if !NET_2_1
+#if !MOBILE
 			Assert.IsTrue ((isf.AssemblyIdentity is Zone), "AssemblyIdentity");
 			Assert.IsTrue ((isf.AssemblyIdentity.ToString ().IndexOf ("Intranet") > 0), "Zone - Assembly");
 			Assert.IsTrue ((isf.DomainIdentity is Zone), "DomainIdentity");
@@ -457,19 +455,10 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 				try {
 					isf.CreateDirectory (path);
 				}
-#if NET_4_0
 				catch (IsolatedStorageException ex) {
 					Assert.IsFalse (ex.Message.IndexOf (path) >= 0, "Message");
 					Assert.IsNull (ex.InnerException, "InnerException");
 				}
-#else
-				catch (IOException ex) {
-					Assert.AreEqual (typeof (IOException), ex.GetType (), "Type");
-					// don't leak path information
-					Assert.IsFalse (ex.Message.IndexOf (path) >= 0, "Message");
-					Assert.IsNull (ex.InnerException, "InnerException");
-				}
-#endif
 			}
 		}
 
@@ -498,11 +487,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		}
 
 		[Test]
-#if NET_4_0
 		[ExpectedException (typeof (ArgumentException))]
-#else
-		[ExpectedException (typeof (SecurityException))]
-#endif
 		public void GetFilesInSubdirs ()
 		{
 			IsolatedStorageFile isf = IsolatedStorageFile.GetUserStoreForAssembly ();
@@ -511,7 +496,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		}
 
         
-#if NET_4_0
 		[Test]
 		[ExpectedException (typeof (ArgumentException))]
 		public void GetDirsInSubDirs ()
@@ -520,7 +504,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			isf.CreateDirectory ("subdir");
 			string [] dir_names = isf.GetDirectoryNames ("subdir/../*");
 		}
-#endif
 
 		[Test] // https://bugzilla.novell.com/show_bug.cgi?id=376188
 		public void CreateSubDirectory ()
@@ -555,7 +538,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			} catch (ArgumentNullException) {
 			}
 
-#if NET_4_0
 			// We are getting an internal IndexOutOfRangeException in 2.0
 			// Not sure we want to mimic that one.
 			try {
@@ -563,7 +545,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 				Assert.Fail ("#Exc1");
 			} catch (IsolatedStorageException) {
 			}
-#endif
 
 			try {
 				isf.DeleteFile ("idontexist");
@@ -571,13 +552,11 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			} catch (IsolatedStorageException) {
 			}
 
-#if NET_4_0
 			try {
 				isf.DeleteFile ("../../file");
 				Assert.Fail ("#Exc3");
 			} catch (IsolatedStorageException) {
 			}
-#endif
 		
 			try {
 				isf.DeleteFile ("subdir/file");
@@ -598,7 +577,7 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 		{
 			IsolatedStorageScope scope = IsolatedStorageScope.User | IsolatedStorageScope.Roaming | IsolatedStorageScope.Assembly | IsolatedStorageScope.Domain;
 			IsolatedStorageFile isf = IsolatedStorageFile.GetStore (scope, null, null);
-#if !NET_2_1
+#if !MOBILE
 			Assert.AreEqual (typeof (Url), isf.AssemblyIdentity.GetType (), "AssemblyIdentity");
 			Assert.AreEqual (typeof (Url), isf.DomainIdentity.GetType (), "DomainIdentity");
 #endif
@@ -618,7 +597,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 			}
 		}
 
-#if NET_4_0
 		[Test]
 		public void Remove ()
 		{
@@ -1056,7 +1034,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 				isf.MoveFile ("  ", "file-new-new");
 				Assert.Fail ("#Exc2");
 			} catch (ArgumentException e) {
-				Console.WriteLine (e);
 			}
 
 			try {
@@ -1121,7 +1098,6 @@ namespace MonoTests.System.IO.IsolatedStorageTest {
 				isf.DeleteDirectory ("dir1");
 			}
 		}
-#endif
 		[Test]
 		public void RootedDirectory ()
 		{

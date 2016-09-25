@@ -53,7 +53,6 @@ namespace MonoTests.System.Collections.Generic
 			}
 		}
 
-#if NET_4_5
 		[Test]
 		public void Create ()
 		{
@@ -70,7 +69,6 @@ namespace MonoTests.System.Collections.Generic
 			} catch (ArgumentNullException) {
 			}
 		}
-#endif
 
 		[Test]
 		public void DefaultComparer_UserComparable ()
@@ -95,25 +93,6 @@ namespace MonoTests.System.Collections.Generic
 		}
 
 
-#if !NET_4_0 // FIXME: the blob contains the 2.0 mscorlib version
-
-		[Test] // bug #80929
-		public void SerializeDefault ()
-		{
-			Comparer<int> c = Comparer<int>.Default;
-
-			BinaryFormatter bf = new BinaryFormatter ();
-			MemoryStream ms = new MemoryStream ();
-			bf.Serialize (ms, c);
-
-			byte [] buffer = new byte [ms.Length];
-			ms.Position = 0;
-			ms.Read (buffer, 0, buffer.Length);
-
-			Assert.AreEqual (_serializedDefault, buffer);
-		}
-
-#endif
 
 		[Test]
 		public void DeserializeDefault ()

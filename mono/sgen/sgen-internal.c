@@ -3,18 +3,7 @@
  *
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
@@ -34,13 +23,13 @@ static const int allocator_sizes [] = {
 	   8,   16,   24,   32,   40,   48,   64,   80,
 	  96,  128,  160,  192,  224,  248,  296,  320,
 	 384,  448,  504,  528,  584,  680,  816, 1088,
-	1360, 2044, 2336, 2728, 3272, 4092, 5456, 8188 };
+	1360, 2046, 2336, 2728, 3272, 4094, 5456, 8190 };
 #else
 static const int allocator_sizes [] = {
 	   8,   16,   24,   32,   40,   48,   64,   80,
-	  96,  128,  160,  192,  224,  248,  320,  328,
-	 384,  448,  528,  584,  680,  816, 1016, 1088,
-	1360, 2040, 2336, 2728, 3272, 4088, 5456, 8184 };
+	  96,  128,  160,  192,  224,  248,  296,  320,
+	 384,  448,  504,  528,  584,  680,  816, 1088,
+	1360, 2044, 2336, 2728, 3272, 4092, 5456, 8188 };
 #endif
 
 #define NUM_ALLOCATORS	(sizeof (allocator_sizes) / sizeof (int))
@@ -107,8 +96,10 @@ sgen_register_fixed_internal_mem_type (int type, size_t size)
 
 	if (fixed_type_allocator_indexes [type] == -1)
 		fixed_type_allocator_indexes [type] = slot;
-	else
-		g_assert (fixed_type_allocator_indexes [type] == slot);
+	else {
+		if (fixed_type_allocator_indexes [type] != slot)
+			g_error ("Invalid double registration of type %d old slot %d new slot %d", type, fixed_type_allocator_indexes [type], slot);
+	}
 }
 
 static const char*
@@ -150,6 +141,8 @@ description_for_type (int type)
 	case INTERNAL_MEM_CARDTABLE_MOD_UNION: return "cardtable-mod-union";
 	case INTERNAL_MEM_BINARY_PROTOCOL: return "binary-protocol";
 	case INTERNAL_MEM_TEMPORARY: return "temporary";
+	case INTERNAL_MEM_LOG_ENTRY: return "log-entry";
+	case INTERNAL_MEM_COMPLEX_DESCRIPTORS: return "complex-descriptors";
 	default: {
 		const char *description = sgen_client_description_for_internal_mem_type (type);
 		SGEN_ASSERT (0, description, "Unknown internal mem type");
@@ -165,7 +158,7 @@ sgen_alloc_internal_dynamic (size_t size, int type, gboolean assert_on_failure)
 	void *p;
 
 	if (size > allocator_sizes [NUM_ALLOCATORS - 1]) {
-		p = sgen_alloc_os_memory (size, SGEN_ALLOC_INTERNAL | SGEN_ALLOC_ACTIVATE, NULL);
+		p = sgen_alloc_os_memory (size, (SgenAllocFlags)(SGEN_ALLOC_INTERNAL | SGEN_ALLOC_ACTIVATE), NULL, MONO_MEM_ACCOUNT_SGEN_INTERNAL);
 		if (!p)
 			sgen_assert_memory_alloc (NULL, size, description_for_type (type));
 	} else {
@@ -190,7 +183,7 @@ sgen_free_internal_dynamic (void *addr, size_t size, int type)
 		return;
 
 	if (size > allocator_sizes [NUM_ALLOCATORS - 1])
-		sgen_free_os_memory (addr, size, SGEN_ALLOC_INTERNAL);
+		sgen_free_os_memory (addr, size, SGEN_ALLOC_INTERNAL, MONO_MEM_ACCOUNT_SGEN_INTERNAL);
 	else
 		mono_lock_free_free (addr, block_size (size));
 }
@@ -267,7 +260,7 @@ sgen_init_internal_allocator (void)
 	for (i = 0; i < NUM_ALLOCATORS; ++i) {
 		allocator_block_sizes [i] = block_size (allocator_sizes [i]);
 		mono_lock_free_allocator_init_size_class (&size_classes [i], allocator_sizes [i], allocator_block_sizes [i]);
-		mono_lock_free_allocator_init_allocator (&allocators [i], &size_classes [i]);
+		mono_lock_free_allocator_init_allocator (&allocators [i], &size_classes [i], MONO_MEM_ACCOUNT_SGEN_INTERNAL);
 	}
 
 	for (size = mono_pagesize (); size <= LOCK_FREE_ALLOC_SB_MAX_SIZE; size <<= 1) {

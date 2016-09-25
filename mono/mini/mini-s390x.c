@@ -237,7 +237,7 @@ if (ins->inst_target_bb->native_offset) { 					\
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 
 /*
- * imt thunking size values
+ * imt trampoline size values
  */
 #define CMP_SIZE 	24
 #define LOADCON_SIZE	20
@@ -246,8 +246,8 @@ if (ins->inst_target_bb->native_offset) { 					\
 #define JUMP_SIZE	6
 #define ENABLE_WRONG_METHOD_CHECK 0
 
-#define mono_mini_arch_lock() mono_mutex_lock (&mini_arch_mutex)
-#define mono_mini_arch_unlock() mono_mutex_unlock (&mini_arch_mutex)
+#define mono_mini_arch_lock() mono_os_mutex_lock (&mini_arch_mutex)
+#define mono_mini_arch_unlock() mono_os_mutex_unlock (&mini_arch_mutex)
 
 /*========================= End of Defines =========================*/
 
@@ -264,9 +264,11 @@ if (ins->inst_target_bb->native_offset) { 					\
 #include <mono/metadata/appdomain.h>
 #include <mono/metadata/debug-helpers.h>
 #include <mono/metadata/profiler-private.h>
+#include <mono/utils/mono-error.h>
+#include <mono/utils/mono-error-internals.h>
 #include <mono/utils/mono-math.h>
 #include <mono/utils/mono-mmap.h>
-#include <mono/utils/mono-hwcap-s390x.h>
+#include <mono/utils/mono-hwcap.h>
 #include <mono/utils/mono-threads.h>
 
 #include "mini-s390x.h"
@@ -275,6 +277,7 @@ if (ins->inst_target_bb->native_offset) { 					\
 #include "jit-icalls.h"
 #include "ir-emit.h"
 #include "trace.h"
+#include "mini-gc.h"
 
 /*========================= End of Includes ========================*/
 
@@ -396,8 +399,6 @@ pthread_key_t lmf_addr_key;
 
 gboolean lmf_addr_key_inited = FALSE; 
 
-facilityList_t facs;
-
 /*
  * The code generated for sequence points reads from this location, 
  * which is made read-only when single stepping is enabled.
@@ -413,6 +414,27 @@ breakpoint_t breakpointCode;
 
 static mono_mutex_t mini_arch_mutex;
 
+static const char * grNames[] = {
+	"s390_r0", "s390_sp", "s390_r2", "s390_r3", "s390_r4",
+	"s390_r5", "s390_r6", "s390_r7", "s390_r8", "s390_r9",
+	"s390_r10", "s390_r11", "s390_r12", "s390_r13", "s390_r14",
+	"s390_r15"
+};
+
+static const char * fpNames[] = {
+	"s390_f0", "s390_f1", "s390_f2", "s390_f3", "s390_f4",
+	"s390_f5", "s390_f6", "s390_f7", "s390_f8", "s390_f9",
+	"s390_f10", "s390_f11", "s390_f12", "s390_f13", "s390_f14",
+	"s390_f15"
+};
+
+static const char * vrNames[] = {
+	"vr0",  "vr1",  "vr2",  "vr3",  "vr4",  "vr5",  "vr6",  "vr7", 
+	"vr8",  "vr9",  "vr10", "vr11", "vr12", "vr13", "vr14", "vr15",
+	"vr16", "vr17", "vr18", "vr19", "vr20", "vr21", "vr22", "vr23",
+	"vr24", "vr25", "vr26", "vr27", "vr28", "vr29", "vr30", "vr31"
+};
+
 /*====================== End of Global Variables ===================*/
 
 /*------------------------------------------------------------------*/
@@ -425,16 +447,10 @@ static mono_mutex_t mini_arch_mutex;
 /*------------------------------------------------------------------*/
 
 const char*
-mono_arch_regname (int reg) {
-	static const char * rnames[] = {
-		"s390_r0", "s390_sp", "s390_r2", "s390_r3", "s390_r4",
-		"s390_r5", "s390_r6", "s390_r7", "s390_r8", "s390_r9",
-		"s390_r10", "s390_r11", "s390_r12", "s390_r13", "s390_r14",
-		"s390_r15"
-	};
-
+mono_arch_regname (int reg) 
+{
 	if (reg >= 0 && reg < 16)
-		return rnames [reg];
+		return grNames [reg];
 	else
 		return "unknown";
 }
@@ -451,16 +467,30 @@ mono_arch_regname (int reg) {
 /*------------------------------------------------------------------*/
 
 const char*
-mono_arch_fregname (int reg) {
-	static const char * rnames[] = {
-		"s390_f0", "s390_f1", "s390_f2", "s390_f3", "s390_f4",
-		"s390_f5", "s390_f6", "s390_f7", "s390_f8", "s390_f9",
-		"s390_f10", "s390_f11", "s390_f12", "s390_f13", "s390_f14",
-		"s390_f15"
-	};
-
+mono_arch_fregname (int reg) 
+{
 	if (reg >= 0 && reg < 16)
-		return rnames [reg];
+		return fpNames [reg];
+	else
+		return "unknown";
+}
+
+/*========================= End of Function ========================*/
+
+/*------------------------------------------------------------------*/
+/*                                                                  */
+/* Name		- mono_arch_xregname                                */
+/*                                                                  */
+/* Function	- Returns the name of the register specified by     */
+/*		  the input parameter.         		 	    */
+/*		                               		 	    */
+/*------------------------------------------------------------------*/
+
+const char *
+mono_arch_xregname (int reg)
+{
+	if (reg < s390_VR_NREG)
+		return vrNames [reg];
 	else
 		return "unknown";
 }
@@ -484,7 +514,7 @@ mono_arch_fregname (int reg) {
 /*------------------------------------------------------------------*/
 
 int
-mono_arch_get_argument_info (MonoGenericSharingContext *gsctx, MonoMethodSignature *csig, 
+mono_arch_get_argument_info (MonoMethodSignature *csig, 
 			     int param_count, 
 			     MonoJitArgumentInfo *arg_info)
 {
@@ -511,7 +541,7 @@ mono_arch_get_argument_info (MonoGenericSharingContext *gsctx, MonoMethodSignatu
 		if (csig->pinvoke)
 			size = mono_type_native_stack_size (csig->params [k], (guint32 *) &align);
 		else
-			size = mini_type_stack_size (NULL, csig->params [k], &align);
+			size = mini_type_stack_size (csig->params [k], &align);
 
 		frame_size += pad = (align - (frame_size & (align - 1))) & (align - 1);	
 		arg_info [k].pad = pad;
@@ -548,6 +578,7 @@ emit_unwind_regs(MonoCompile *cfg, guint8 *code, int start, int end, long offset
 
 	for (i = start; i < end; i++) {
 		mono_emit_unwind_op_offset (cfg, code, i, offset);
+		mini_gc_set_slot_type_from_cfa (cfg, offset, SLOT_NOREF);
 		offset += sizeof(gulong);
 	}
 }
@@ -734,6 +765,20 @@ cvtMonoType(MonoTypeEnum t)
 /*		                               			    */
 /*------------------------------------------------------------------*/
 
+static void
+decodeParmString (MonoString *s)
+{
+	MonoError error;
+	char *str = mono_string_to_utf8_checked(s, &error);
+	if (is_ok (&error))  {
+		printf("[STRING:%p:%s], ", s, str);
+		g_free (str);
+	} else {
+		mono_error_cleanup (&error);
+		printf("[STRING:%p:], ", s);
+	}
+}
+
 static void 
 decodeParm(MonoType *type, void *curParm, int size)
 {
@@ -742,7 +787,7 @@ decodeParm(MonoType *type, void *curParm, int size)
 	if (type->byref) {
 		printf("[BYREF:%p], ", *((char **) curParm));
 	} else {
-		simpleType = mono_type_get_underlying_type(type)->type;
+		simpleType = mini_get_underlying_type(type)->type;
 enum_parmtype:
 		switch (simpleType) {
 			case MONO_TYPE_I :
@@ -782,7 +827,7 @@ enum_parmtype:
 				MonoString *s = *((MonoString **) curParm);
 				if (s) {
 					g_assert (((MonoObject *) s)->vtable->klass == mono_defaults.string_class);
-					printf("[STRING:%p:%s], ", s, mono_string_to_utf8(s));
+					decodeParmString (s);
 				} else {
 					printf("[STRING:null], ");
 				}
@@ -791,20 +836,19 @@ enum_parmtype:
 			case MONO_TYPE_CLASS :
 			case MONO_TYPE_OBJECT : {
 				MonoObject *obj = *((MonoObject **) curParm);
-				MonoClass *class;
+				MonoClass *klass;
 				if ((obj) && (obj->vtable)) {
 					printf("[CLASS/OBJ:");
-					class = obj->vtable->klass;
+					klass = obj->vtable->klass;
 					printf("%p [%p] ",obj,curParm);
-					if (class == mono_defaults.string_class) {
-						printf("[STRING:%p:%s]", 
-						       obj, mono_string_to_utf8 ((MonoString *) obj));
-					} else if (class == mono_defaults.int32_class) { 
+					if (klass == mono_defaults.string_class) {
+						decodeParmString ((MonoString *)obj);
+					} else if (klass == mono_defaults.int32_class) { 
 						printf("[INT32:%p:%d]", 
 							obj, *(gint32 *)((char *)obj + sizeof (MonoObject)));
 					} else
 						printf("[%s.%s:%p]", 
-						       class->name_space, class->name, obj);
+						       klass->name_space, klass->name, obj);
 					printf("], ");
 				} else {
 					printf("[OBJECT:null], ");
@@ -893,7 +937,7 @@ static void
 enter_method (MonoMethod *method, RegParm *rParm, char *sp)
 {
 	int i, oParm = 0, iParm = 0;
-	MonoClass *class;
+	MonoClass *klass;
 	MonoObject *obj;
 	MonoMethodSignature *sig;
 	char *fname;
@@ -923,26 +967,26 @@ enter_method (MonoMethod *method, RegParm *rParm, char *sp)
 	}
 
 	if (sig->hasthis) {
-		gpointer *this = (gpointer *) rParm->gr[iParm];
-		obj = (MonoObject *) this;
+		gpointer *this_arg = (gpointer *) rParm->gr[iParm];
+		obj = (MonoObject *) this_arg;
 		switch(method->klass->this_arg.type) {
 		case MONO_TYPE_VALUETYPE:
 			if (obj) {
-				guint64 *value = (guint64 *) ((uintptr_t)this + sizeof(MonoObject));
-				printf("this:[value:%p:%016lx], ", this, *value);
+				guint64 *value = (guint64 *) ((uintptr_t)this_arg + sizeof(MonoObject));
+				printf("this:[value:%p:%016lx], ", this_arg, *value);
 			} else 
 				printf ("this:[NULL], ");
 			break;
 		case MONO_TYPE_STRING:
 			if (obj) {
 				if (obj->vtable) {
-					class = obj->vtable->klass;
-					if (class == mono_defaults.string_class) {
-						printf ("this:[STRING:%p:%s], ", 
-							obj, mono_string_to_utf8 ((MonoString *)obj));
+					klass = obj->vtable->klass;
+					if (klass == mono_defaults.string_class) {
+						printf ("this:");
+						decodeParmString((MonoString *)obj);
 					} else {
 						printf ("this:%p[%s.%s], ", 
-							obj, class->name_space, class->name);
+							obj, klass->name_space, klass->name);
 					}
 				} else 
 					printf("vtable:[NULL], ");
@@ -950,7 +994,7 @@ enter_method (MonoMethod *method, RegParm *rParm, char *sp)
 				printf ("this:[NULL], ");
 			break;
 		default :
-			printf("this[%s]: %p, ",cvtMonoType(method->klass->this_arg.type),this);
+			printf("this[%s]: %p, ",cvtMonoType(method->klass->this_arg.type),this_arg);
 		}
 		oParm++;
 	}
@@ -1095,7 +1139,7 @@ handle_enum:
 ;
 		if (s) {
 			g_assert (((MonoObject *)s)->vtable->klass == mono_defaults.string_class);
-			printf ("[STRING:%p:%s]", s, mono_string_to_utf8 (s));
+			decodeParmString (s);
 		} else 
 			printf ("[STRING:null], ");
 		break;
@@ -1221,6 +1265,26 @@ handle_enum:
 		}
 	}
 		break;
+	case MONO_TYPE_GENERICINST: {
+		printf("[GENERICINST]\n");
+	}
+		break;
+	case MONO_TYPE_MVAR: {
+		printf("[MVAR]\n");
+	}
+		break;
+	case MONO_TYPE_CMOD_REQD: {
+		printf("[CMOD_REQD]\n");
+	}
+		break;
+	case MONO_TYPE_CMOD_OPT: {
+		printf("[CMOD_OPT]\n");
+	}
+		break;
+	case MONO_TYPE_INTERNAL: {
+		printf("[INTERNAL]\n");
+	}
+		break;
 	default:
 		printf ("(unknown return type %x)", 
 			mono_method_signature (method)->ret->type);
@@ -1261,10 +1325,11 @@ mono_arch_init (void)
 {
 	guint8 *code;
 
-	mono_mutex_init_recursive (&mini_arch_mutex);
+	mono_set_partial_sharing_supported (FALSE);
+	mono_os_mutex_init_recursive (&mini_arch_mutex);
 
-	ss_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ);
-	bp_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ);
+	ss_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ, MONO_MEM_ACCOUNT_OTHER);
+	bp_trigger_page = mono_valloc (NULL, mono_pagesize (), MONO_MMAP_READ, MONO_MEM_ACCOUNT_OTHER);
 	mono_mprotect (bp_trigger_page, mono_pagesize (), 0);
 	
 	code = (guint8 *) &breakpointCode;
@@ -1289,10 +1354,10 @@ void
 mono_arch_cleanup (void)
 {
 	if (ss_trigger_page)
-		mono_vfree (ss_trigger_page, mono_pagesize ());
+		mono_vfree (ss_trigger_page, mono_pagesize (), MONO_MEM_ACCOUNT_OTHER);
 	if (bp_trigger_page)
-		mono_vfree (bp_trigger_page, mono_pagesize ());
-	mono_mutex_destroy (&mini_arch_mutex);
+		mono_vfree (bp_trigger_page, mono_pagesize (), MONO_MEM_ACCOUNT_OTHER);
+	mono_os_mutex_destroy (&mini_arch_mutex);
 }
 
 /*========================= End of Function ========================*/
@@ -1317,21 +1382,6 @@ mono_arch_cpu_optimizations (guint32 *exclude_mask)
 	return opts;
 }
 
-/*========================= End of Function ========================*/
-
-/*------------------------------------------------------------------*/
-/*                                                                  */
-/* Name         - mono_arch_cpu_enumerate_simd_versions             */
-/*                                                                  */
-/* Function     - Returns the SIMD instruction sets on this CPU     */
-/*                                                                  */
-/*------------------------------------------------------------------*/
-guint32
-mono_arch_cpu_enumerate_simd_versions (void)
-{
-	/* SIMD is currently unimplemented */
-	return 0;
-}
 /*========================= End of Function ========================*/
 
 /*------------------------------------------------------------------*/
@@ -1537,7 +1587,6 @@ get_call_info (MonoCompile *cfg, MonoMemPool *mp, MonoMethodSignature *sig)
 	gboolean is_pinvoke = sig->pinvoke;
 	CallInfo *cinfo;
 	size_data *sz;
-	MonoGenericSharingContext *gsctx = cfg ? cfg->generic_sharing_context : NULL;
 
 	if (mp)
 		cinfo = mono_mempool_alloc0 (mp, sizeof (CallInfo) + sizeof (ArgInfo) * nParm);
@@ -1565,8 +1614,7 @@ get_call_info (MonoCompile *cfg, MonoMemPool *mp, MonoMethodSignature *sig)
 	/* area that the callee will use.			    */
 	/*----------------------------------------------------------*/
 
-	ret_type = mini_type_get_underlying_type (gsctx, sig->ret);
-	ret_type = mini_get_basic_type_from_generic (gsctx, ret_type);
+	ret_type = mini_get_underlying_type (sig->ret);
 	simpleType = ret_type->type;
 enum_retvalue:
 	switch (simpleType) {
@@ -1613,7 +1661,7 @@ enum_retvalue:
 				simpleType = mono_class_enum_basetype (klass)->type;
 				goto enum_retvalue;
 			}
-			size = mini_type_stack_size_full (gsctx, &klass->byval_arg, NULL, sig->pinvoke);
+			size = mini_type_stack_size_full (&klass->byval_arg, NULL, sig->pinvoke);
 	
 			cinfo->struct_ret = 1;
 			cinfo->ret.size   = size;
@@ -1644,7 +1692,7 @@ enum_retvalue:
 	if (cinfo->struct_ret && !is_pinvoke && 
 	    (sig->hasthis || 
              (sig->param_count > 0 && 
-	      MONO_TYPE_IS_REFERENCE (mini_type_get_underlying_type (gsctx, sig->params [0]))))) {
+	      MONO_TYPE_IS_REFERENCE (mini_get_underlying_type (sig->params [0]))))) {
 		if (sig->hasthis) {
 			cinfo->args[nParm].size = sizeof (gpointer);
 			add_general (&gr, sz, cinfo->args + nParm);
@@ -1706,7 +1754,7 @@ enum_retvalue:
 			continue;
 		}
 
-		ptype = mini_type_get_underlying_type (gsctx, sig->params [i]);
+		ptype = mini_get_underlying_type (sig->params [i]);
 		simpleType = ptype->type;
 		cinfo->args[nParm].type = simpleType;
 		switch (simpleType) {
@@ -1954,7 +2002,7 @@ mono_arch_allocate_vars (MonoCompile *cfg)
 	cinfo   = get_call_info (cfg, cfg->mempool, sig);
 
 	if (!cinfo->struct_ret) {
-		switch (mini_type_get_underlying_type (cfg->generic_sharing_context, sig->ret)->type) {
+		switch (mini_get_underlying_type (sig->ret)->type) {
 		case MONO_TYPE_VOID:
 			break;
 		default:
@@ -2327,7 +2375,7 @@ mono_arch_emit_call (MonoCompile *cfg, MonoCallInst *call)
 			t = sig->params [i - sig->hasthis];
 		else
 			t = &mono_defaults.int_class->byval_arg;
-		t = mini_type_get_underlying_type (cfg->generic_sharing_context, t);
+		t = mini_get_underlying_type (t);
 
 		in = call->args [i];
 
@@ -2512,10 +2560,12 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 
 		mono_call_inst_add_outarg_reg (cfg, call, dreg, ainfo->reg, TRUE);
 	} else {
+		MonoError error;
 		MonoMethodHeader *header;
 		int srcReg;
 
-		header = mono_method_get_header (cfg->method);
+		header = mono_method_get_header_checked (cfg->method, &error);
+		mono_error_assert_ok (&error); /* FIXME don't swallow the error */
 		if ((cfg->flags & MONO_CFG_HAS_ALLOCA) || header->num_clauses)
 			srcReg = s390_r11;
 		else
@@ -2543,8 +2593,7 @@ mono_arch_emit_outarg_vt (MonoCompile *cfg, MonoInst *ins, MonoInst *src)
 void
 mono_arch_emit_setret (MonoCompile *cfg, MonoMethod *method, MonoInst *val)
 {
-	MonoType *ret = mini_type_get_underlying_type (cfg->generic_sharing_context,
-				mono_method_signature (method)->ret);
+	MonoType *ret = mini_get_underlying_type (mono_method_signature (method)->ret);
 
 	if (!ret->byref) {
 		if (ret->type == MONO_TYPE_R4) {
@@ -2643,8 +2692,7 @@ mono_arch_instrument_epilog_full (MonoCompile *cfg, void *func, void *p, gboolea
 		   saveOffset,
 		   offset;
 	MonoMethod *method = cfg->method;
-	int rtype = mini_type_get_underlying_type (cfg->generic_sharing_context,
-			mono_method_signature (method)->ret)->type;
+	int rtype = mini_get_underlying_type (mono_method_signature (method)->ret)->type;
 
 	offset = code - cfg->native_code;
 	/*-----------------------------------------*/
@@ -2838,15 +2886,20 @@ emit_float_to_int (MonoCompile *cfg, guchar *code, int dreg, int sreg, int size,
 	if (is_signed) {
 		s390_cgdbr (code, dreg, 5, sreg);
 		switch (size) {
-			case 1:
-				s390_lghi (code, s390_r0, 0);
-				s390_lghi (code, s390_r13, 0xff);
-				s390_ltgr (code, dreg, dreg);
-				s390_jnl  (code, 4);
-				s390_lghi (code, s390_r0, 0x80);
-				s390_ngr  (code, dreg, s390_r13);
-				s390_ogr  (code, dreg, s390_r0);
-				break;
+		case 1:
+			s390_ltgr (code, dreg, dreg);
+			s390_jnl  (code, 4);
+			s390_oill (code, dreg, 0x80);
+			s390_lghi (code, s390_r0, 0xff);
+			s390_ngr  (code, dreg, s390_r0);
+			break;
+		case 2:
+			s390_ltgr (code, dreg, dreg);
+			s390_jnl  (code, 4);
+			s390_oill (code, dreg, 0x8000);
+			s390_llill(code, s390_r0, 0xffff);
+			s390_ngr  (code, dreg, s390_r0);
+			break;
 		}
 	} else {
 		short *o[1];
@@ -2863,15 +2916,14 @@ emit_float_to_int (MonoCompile *cfg, guchar *code, int dreg, int sreg, int size,
 		PTRSLOT (code, o[0]);
 		s390_cfdbr  (code, dreg, 5, sreg);
 		switch (size) {
-			case 1: 
-				s390_lghi (code, s390_r0, 0xff);
-				s390_ngr  (code, dreg, s390_r0);
-				break;
-			case 2:
-				s390_lghi (code, s390_r0, -1);
-				s390_srlg (code, s390_r0, s390_r0, 0, 16);
-				s390_ngr  (code, dreg, s390_r0);
-				break;
+		case 1: 
+			s390_lghi (code, s390_r0, 0xff);
+			s390_ngr  (code, dreg, s390_r0);
+			break;
+		case 2:
+			s390_llill(code, s390_r0, 0xffff);
+			s390_ngr  (code, dreg, s390_r0);
+			break;
 		}
 	}
 	return code;
@@ -3839,11 +3891,14 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			s390_ldgr (code, ins->dreg, ins->sreg1);
 			break;
 		case OP_MOVE_F_TO_I4:
-			s390_lgdr (code, ins->dreg, ins->sreg1);
+			s390_ledbr (code, s390_f0, ins->sreg1);
+			s390_lgdr (code, ins->dreg, s390_f0);
+			s390_srag (code, ins->dreg, ins->dreg, 0, 32);
 			break;
 		case OP_MOVE_I4_TO_F: 
-			s390_lgfr (code, s390_r0, ins->sreg1);
+			s390_slag (code, s390_r0, ins->sreg1, 0, 32);
 			s390_ldgr (code, ins->dreg, s390_r0);
+			s390_ldebr (code, ins->dreg, ins->dreg);
 			break;
 		case OP_FCONV_TO_R4:
 			s390_ledbr (code, ins->dreg, ins->sreg1);
@@ -4123,7 +4178,7 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		case OP_GENERIC_CLASS_INIT: {
 			static int byte_offset = -1;
 			static guint8 bitmask;
-			guint16 *jump;
+			short int *jump;
 
 			g_assert (ins->sreg1 == S390_FIRST_ARG_REG);
 
@@ -4133,8 +4188,8 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			s390_tm (code, ins->sreg1, byte_offset, bitmask);
 			s390_jo (code, 0); CODEPTR(code, jump);
 
-			mono_add_patch_info (cfg, code-cfg->native_code, MONO_PATCH_INFO_JIT_ICALL_ADDR,
-						"specific_trampoline_generic_class_init");
+			mono_add_patch_info (cfg, code-cfg->native_code, MONO_PATCH_INFO_INTERNAL_METHOD,
+						"mono_generic_class_init");
 			S390_CALL_TEMPLATE(code, s390_r14);
 
 			PTRSLOT (code, jump);
@@ -4307,27 +4362,36 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		}
 			break;
 		case OP_LOADR4_MEMBASE: {
-			S390_LONG (code, ldy, ld, s390_f15, 0, 
+			S390_LONG (code, ley, le, s390_f15, 0, 
 				   ins->inst_basereg, ins->inst_offset);
 			s390_ldebr (code, ins->dreg, s390_f15);
 		}
 			break;
 		case OP_ICONV_TO_R_UN: {
-			s390_cdfbr (code, ins->dreg, ins->sreg1);
-			s390_ltr   (code, ins->sreg1, ins->sreg1);
-			s390_jnl   (code, 8);
-			S390_SET   (code, s390_r13, 0x41f0000000000000llu);
-			s390_ldgr  (code, s390_f15, s390_r13);
-			s390_adbr  (code, ins->dreg, s390_f15);
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_cdlfbr (code, ins->dreg, 5, ins->sreg1, 0);
+			} else {
+				s390_llgfr (code, s390_r0, ins->sreg1);
+				s390_cdgbr (code, ins->dreg, s390_r0);
+			}
 		}
 			break;
 		case OP_LCONV_TO_R_UN: {
-			s390_cdgbr (code, ins->dreg, ins->sreg1);
-			s390_ltgr  (code, ins->sreg1, ins->sreg1);
-			s390_jnl   (code, 8);
-			S390_SET   (code, s390_r13, 0x41f0000000000000llu);
-			s390_ldgr  (code, s390_f15, s390_r13);
-			s390_adbr  (code, ins->dreg, s390_f15);
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_cdlgbr (code, ins->dreg, 5, ins->sreg1, 0);
+			} else {
+				short int *jump;
+				s390_cxgbr (code, s390_f12, ins->sreg1);
+				s390_ltgr  (code, ins->sreg1, ins->sreg1);
+				s390_jnl   (code, 0); CODEPTR(code, jump);
+				S390_SET   (code, s390_r13, 0x403f000000000000llu);
+				s390_lgdr  (code, s390_f13, s390_r13);
+				s390_lzdr  (code, s390_f15);
+				s390_axbr  (code, s390_f12, s390_f13);
+				PTRSLOT(code, jump);
+				s390_ldxbr (code, s390_f13, s390_f12);
+				s390_ldr   (code, ins->dreg, s390_f13);
+			}
 		}
 			break;
 		case OP_LCONV_TO_R4:
@@ -4342,27 +4406,60 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		}
 			break;
 		case OP_FCONV_TO_I1:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 1, TRUE);
+			s390_cgdbr (code, ins->dreg, 5, ins->sreg1);
+			s390_ltgr  (code, ins->dreg, ins->dreg);
+			s390_jnl   (code, 4);
+			s390_oill  (code, ins->dreg, 0x80);
+			s390_lghi  (code, s390_r0, 0xff);
+			s390_ngr   (code, ins->dreg, s390_r0);
 			break;
 		case OP_FCONV_TO_U1:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 1, FALSE);
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_clgdbr (code, ins->dreg, 5, ins->sreg1, 0);
+				s390_lghi  (code, s390_r0, 0xff);
+				s390_ngr   (code, ins->dreg, s390_r0);
+			} else {
+				code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 1, FALSE);
+			}
 			break;
 		case OP_FCONV_TO_I2:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 2, TRUE);
+			s390_cgdbr (code, ins->dreg, 5, ins->sreg1);
+			s390_ltgr  (code, ins->dreg, ins->dreg);
+			s390_jnl   (code, 4);
+			s390_oill  (code, ins->dreg, 0x8000);
+			s390_llill (code, s390_r0, 0xffff);
+			s390_ngr   (code, ins->dreg, s390_r0);
 			break;
 		case OP_FCONV_TO_U2:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 2, FALSE);
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_clgdbr (code, ins->dreg, 5, ins->sreg1, 0);
+				s390_llill  (code, s390_r0, 0xffff);
+				s390_ngr    (code, ins->dreg, s390_r0);
+			} else {
+				code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 2, FALSE);
+			}
 			break;
 		case OP_FCONV_TO_I4:
 		case OP_FCONV_TO_I:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 4, TRUE);
+			s390_cfdbr (code, ins->dreg, 5, ins->sreg1);
 			break;
 		case OP_FCONV_TO_U4:
 		case OP_FCONV_TO_U:
-			code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 4, FALSE);
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_clfdbr (code, ins->dreg, 5, ins->sreg1, 0);
+			} else {
+				code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 4, FALSE);
+			}
 			break;
 		case OP_FCONV_TO_I8:
 			s390_cgdbr (code, ins->dreg, 5, ins->sreg1);
+			break;
+		case OP_FCONV_TO_U8:
+			if (mono_hwcap_s390x_has_fpe) {
+				s390_clgdbr (code, ins->dreg, 5, ins->sreg1, 0);
+			} else {
+				code = emit_float_to_int (cfg, code, ins->dreg, ins->sreg1, 8, FALSE);
+			}
 			break;
 		case OP_LCONV_TO_OVF_I: {
 			/* Valid ints: 0xffffffff:8000000 to 00000000:0x7f000000 */
@@ -4520,7 +4617,7 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			s390_tcdb (code, ins->sreg1, 0, s390_r13, 0);
 			s390_jz   (code, 0); CODEPTR(code, o);
 			mono_add_patch_info (cfg, code - cfg->native_code, 
-					     MONO_PATCH_INFO_EXC, "ArithmeticException");
+					     MONO_PATCH_INFO_EXC, "OverflowException");
 			s390_brasl (code, s390_r14,0);
 			PTRSLOT(code, o);
 		}
@@ -4615,9 +4712,10 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 		case OP_MEMORY_BARRIER:
 			s390_mem (code);
 			break;
-#if USE_COOP_GC
 		case OP_GC_SAFE_POINT: {
 			guint8 *br;
+
+			g_assert (mono_threads_is_coop_enabled ());
 
 			s390_chi (code, ins->sreg1, 1);	
 			s390_je  (code, 0); CODEPTR(code, br);
@@ -4627,7 +4725,6 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			PTRSLOT (code, br);
 			break;
 		}
-#endif
 		case OP_GC_LIVENESS_DEF:
 		case OP_GC_LIVENESS_USE:
 		case OP_GC_PARAM_SLOT_LIVENESS_DEF:
@@ -4637,6 +4734,625 @@ mono_arch_output_basic_block (MonoCompile *cfg, MonoBasicBlock *bb)
 			ins->backend.pc_offset = code - cfg->native_code;
 			bb->spill_slot_defs = g_slist_prepend_mempool (cfg->mempool, bb->spill_slot_defs, ins);
 			break;
+#ifdef MONO_ARCH_SIMD_INTRINSICS
+		case OP_ADDPS:
+			s390x_addps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_DIVPS:
+			s390x_divps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MULPS:
+			s390x_mulps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_SUBPS:
+			s390x_subps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MAXPS:
+			s390x_maxps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MINPS:
+			s390x_minps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_COMPPS:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 7);
+			s390x_cmpps_imm (code, ins->sreg1, ins->sreg2, ins->inst_c0);
+			break;
+		case OP_ANDPS:
+			s390x_andps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_ANDNPS:
+			s390x_andnps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_ORPS:
+			s390x_orps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_XORPS:
+			s390x_xorps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_SQRTPS:
+			s390x_sqrtps (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_RSQRTPS:
+			s390x_rsqrtps (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_RCPPS:
+			s390x_rcpps (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_ADDSUBPS:
+			s390x_addsubps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_HADDPS:
+			s390x_haddps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_HSUBPS:
+			s390x_hsubps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_DUPPS_HIGH:
+			s390x_movshdup (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_DUPPS_LOW:
+			s390x_movsldup (code, ins->dreg, ins->sreg1);
+			break;
+
+		case OP_PSHUFLEW_HIGH:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 0xFF);
+			s390x_pshufhw_imm (code, ins->dreg, ins->sreg1, ins->inst_c0);
+			break;
+		case OP_PSHUFLEW_LOW:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 0xFF);
+			s390x_pshuflw_imm (code, ins->dreg, ins->sreg1, ins->inst_c0);
+			break;
+		case OP_PSHUFLED:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 0xFF);
+			s390x_pshufd_imm (code, ins->dreg, ins->sreg1, ins->inst_c0);
+			break;
+		case OP_SHUFPS:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 0xFF);
+			s390x_shufps_imm (code, ins->sreg1, ins->sreg2, ins->inst_c0);
+			break;
+		case OP_SHUFPD:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 0x3);
+			s390x_shufpd_imm (code, ins->sreg1, ins->sreg2, ins->inst_c0);
+			break;
+
+		case OP_ADDPD:
+			s390x_addpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_DIVPD:
+			s390x_divpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MULPD:
+			s390x_mulpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_SUBPD:
+			s390x_subpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MAXPD:
+			s390x_maxpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_MINPD:
+			s390x_minpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_COMPPD:
+			g_assert (ins->inst_c0 >= 0 && ins->inst_c0 <= 7);
+			s390x_cmppd_imm (code, ins->sreg1, ins->sreg2, ins->inst_c0);
+			break;
+		case OP_ANDPD:
+			s390x_andpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_ANDNPD:
+			s390x_andnpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_ORPD:
+			s390x_orpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_XORPD:
+			s390x_xorpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_SQRTPD:
+			s390x_sqrtpd (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_ADDSUBPD:
+			s390x_addsubpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_HADDPD:
+			s390x_haddpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_HSUBPD:
+			s390x_hsubpd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_DUPPD:
+			s390x_movddup (code, ins->dreg, ins->sreg1);
+			break;
+
+		case OP_EXTRACT_MASK:
+			s390x_pmovmskb (code, ins->dreg, ins->sreg1);
+			break;
+
+		case OP_PAND:
+			s390x_pand (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_POR:
+			s390x_por (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PXOR:
+			s390x_pxor (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PADDB:
+			s390x_paddb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PADDW:
+			s390x_paddw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PADDD:
+			s390x_paddd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PADDQ:
+			s390x_paddq (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PSUBB:
+			s390x_psubb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBW:
+			s390x_psubw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBD:
+			s390x_psubd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBQ:
+			s390x_psubq (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PMAXB_UN:
+			s390x_pmaxub (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMAXW_UN:
+			s390x_pmaxuw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMAXD_UN:
+			s390x_pmaxud (code, ins->sreg1, ins->sreg2);
+			break;
+		
+		case OP_PMAXB:
+			s390x_pmaxsb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMAXW:
+			s390x_pmaxsw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMAXD:
+			s390x_pmaxsd (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PAVGB_UN:
+			s390x_pavgb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PAVGW_UN:
+			s390x_pavgw (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PMINB_UN:
+			s390x_pminub (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMINW_UN:
+			s390x_pminuw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMIND_UN:
+			s390x_pminud (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PMINB:
+			s390x_pminsb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMINW:
+			s390x_pminsw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMIND:
+			s390x_pminsd (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PCMPEQB:
+			s390x_pcmpeqb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPEQW:
+			s390x_pcmpeqw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPEQD:
+			s390x_pcmpeqd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPEQQ:
+			s390x_pcmpeqq (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PCMPGTB:
+			s390x_pcmpgtb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPGTW:
+			s390x_pcmpgtw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPGTD:
+			s390x_pcmpgtd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PCMPGTQ:
+			s390x_pcmpgtq (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PSUM_ABS_DIFF:
+			s390x_psadbw (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_UNPACK_LOWB:
+			s390x_punpcklbw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_LOWW:
+			s390x_punpcklwd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_LOWD:
+			s390x_punpckldq (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_LOWQ:
+			s390x_punpcklqdq (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_LOWPS:
+			s390x_unpcklps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_LOWPD:
+			s390x_unpcklpd (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_UNPACK_HIGHB:
+			s390x_punpckhbw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_HIGHW:
+			s390x_punpckhwd (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_HIGHD:
+			s390x_punpckhdq (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_HIGHQ:
+			s390x_punpckhqdq (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_HIGHPS:
+			s390x_unpckhps (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_UNPACK_HIGHPD:
+			s390x_unpckhpd (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PACKW:
+			s390x_packsswb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PACKD:
+			s390x_packssdw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PACKW_UN:
+			s390x_packuswb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PACKD_UN:
+			s390x_packusdw (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PADDB_SAT_UN:
+			s390x_paddusb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBB_SAT_UN:
+			s390x_psubusb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PADDW_SAT_UN:
+			s390x_paddusw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBW_SAT_UN:
+			s390x_psubusw (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PADDB_SAT:
+			s390x_paddsb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBB_SAT:
+			s390x_psubsb (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PADDW_SAT:
+			s390x_paddsw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PSUBW_SAT:
+			s390x_psubsw (code, ins->sreg1, ins->sreg2);
+			break;
+			
+		case OP_PMULW:
+			s390x_pmullw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMULD:
+			s390x_pmulld (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMULQ:
+			s390x_pmuludq (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMULW_HIGH_UN:
+			s390x_pmulhuw (code, ins->sreg1, ins->sreg2);
+			break;
+		case OP_PMULW_HIGH:
+			s390x_pmulhw (code, ins->sreg1, ins->sreg2);
+			break;
+
+		case OP_PSHRW:
+			s390x_psrlw_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHRW_REG:
+			s390x_psrlw (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSARW:
+			s390x_psraw_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSARW_REG:
+			s390x_psraw (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSHLW:
+			s390x_psllw_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHLW_REG:
+			s390x_psllw (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSHRD:
+			s390x_psrld_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHRD_REG:
+			s390x_psrld (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSARD:
+			s390x_psrad_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSARD_REG:
+			s390x_psrad (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSHLD:
+			s390x_pslld_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHLD_REG:
+			s390x_pslld (code, ins->dreg, ins->sreg2);
+			break;
+
+		case OP_PSHRQ:
+			s390x_psrlq_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHRQ_REG:
+			s390x_psrlq (code, ins->dreg, ins->sreg2);
+			break;
+		
+		/*TODO: This is appart of the sse spec but not added
+		case OP_PSARQ:
+			s390x_psraq_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSARQ_REG:
+			s390x_psraq (code, ins->dreg, ins->sreg2);
+			break;	
+		*/
+	
+		case OP_PSHLQ:
+			s390x_psllq_reg_imm (code, ins->dreg, ins->inst_imm);
+			break;
+		case OP_PSHLQ_REG:
+			s390x_psllq (code, ins->dreg, ins->sreg2);
+			break;	
+		case OP_CVTDQ2PD:
+			s390x_cvtdq2pd (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTDQ2PS:
+			s390x_cvtdq2ps (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTPD2DQ:
+			s390x_cvtpd2dq (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTPD2PS:
+			s390x_cvtpd2ps (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTPS2DQ:
+			s390x_cvtps2dq (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTPS2PD:
+			s390x_cvtps2pd (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTTPD2DQ:
+			s390x_cvttpd2dq (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_CVTTPS2DQ:
+			s390x_cvttps2dq (code, ins->dreg, ins->sreg1);
+			break;
+
+		case OP_ICONV_TO_X:
+			amd64_movd_xreg_reg_size (code, ins->dreg, ins->sreg1, 4);
+			break;
+		case OP_EXTRACT_I4:
+			amd64_movd_reg_xreg_size (code, ins->dreg, ins->sreg1, 4);
+			break;
+		case OP_EXTRACT_I8:
+			if (ins->inst_c0) {
+				amd64_movhlps (code, MONO_ARCH_FP_SCRATCH_REG, ins->sreg1);
+				amd64_movd_reg_xreg_size (code, ins->dreg, MONO_ARCH_FP_SCRATCH_REG, 8);
+			} else {
+				amd64_movd_reg_xreg_size (code, ins->dreg, ins->sreg1, 8);
+			}
+			break;
+		case OP_EXTRACT_I1:
+		case OP_EXTRACT_U1:
+			amd64_movd_reg_xreg_size (code, ins->dreg, ins->sreg1, 4);
+			if (ins->inst_c0)
+				amd64_shift_reg_imm (code, X86_SHR, ins->dreg, ins->inst_c0 * 8);
+			amd64_widen_reg (code, ins->dreg, ins->dreg, ins->opcode == OP_EXTRACT_I1, FALSE);
+			break;
+		case OP_EXTRACT_I2:
+		case OP_EXTRACT_U2:
+			/*amd64_movd_reg_xreg_size (code, ins->dreg, ins->sreg1, 4);
+			if (ins->inst_c0)
+				amd64_shift_reg_imm_size (code, X86_SHR, ins->dreg, 16, 4);*/
+			s390x_pextrw_imm (code, ins->dreg, ins->sreg1, ins->inst_c0);
+			amd64_widen_reg_size (code, ins->dreg, ins->dreg, ins->opcode == OP_EXTRACT_I2, TRUE, 4);
+			break;
+		case OP_EXTRACT_R8:
+			if (ins->inst_c0)
+				amd64_movhlps (code, ins->dreg, ins->sreg1);
+			else
+				s390x_movsd (code, ins->dreg, ins->sreg1);
+			break;
+		case OP_INSERT_I2:
+			s390x_pinsrw_imm (code, ins->sreg1, ins->sreg2, ins->inst_c0);
+			break;
+		case OP_EXTRACTX_U2:
+			s390x_pextrw_imm (code, ins->dreg, ins->sreg1, ins->inst_c0);
+			break;
+		case OP_INSERTX_U1_SLOW:
+			/*sreg1 is the extracted ireg (scratch)
+			/sreg2 is the to be inserted ireg (scratch)
+			/dreg is the xreg to receive the value*/
+
+			/*clear the bits from the extracted word*/
+			amd64_alu_reg_imm (code, X86_AND, ins->sreg1, ins->inst_c0 & 1 ? 0x00FF : 0xFF00);
+			/*shift the value to insert if needed*/
+			if (ins->inst_c0 & 1)
+				amd64_shift_reg_imm_size (code, X86_SHL, ins->sreg2, 8, 4);
+			/*join them together*/
+			amd64_alu (code, X86_OR, ins->sreg1, ins->sreg2);
+			s390x_pinsrw_imm (code, ins->dreg, ins->sreg1, ins->inst_c0 / 2);
+			break;
+		case OP_INSERTX_I4_SLOW:
+			s390x_pinsrw_imm (code, ins->dreg, ins->sreg2, ins->inst_c0 * 2);
+			amd64_shift_reg_imm (code, X86_SHR, ins->sreg2, 16);
+			s390x_pinsrw_imm (code, ins->dreg, ins->sreg2, ins->inst_c0 * 2 + 1);
+			break;
+		case OP_INSERTX_I8_SLOW:
+			amd64_movd_xreg_reg_size(code, MONO_ARCH_FP_SCRATCH_REG, ins->sreg2, 8);
+			if (ins->inst_c0)
+				amd64_movlhps (code, ins->dreg, MONO_ARCH_FP_SCRATCH_REG);
+			else
+				s390x_movsd (code, ins->dreg, MONO_ARCH_FP_SCRATCH_REG);
+			break;
+
+		case OP_INSERTX_R4_SLOW:
+			switch (ins->inst_c0) {
+			case 0:
+				if (cfg->r4fp)
+					s390x_movss (code, ins->dreg, ins->sreg2);
+				else
+					s390x_cvtsd2ss (code, ins->dreg, ins->sreg2);
+				break;
+			case 1:
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(1, 0, 2, 3));
+				if (cfg->r4fp)
+					s390x_movss (code, ins->dreg, ins->sreg2);
+				else
+					s390x_cvtsd2ss (code, ins->dreg, ins->sreg2);
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(1, 0, 2, 3));
+				break;
+			case 2:
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(2, 1, 0, 3));
+				if (cfg->r4fp)
+					s390x_movss (code, ins->dreg, ins->sreg2);
+				else
+					s390x_cvtsd2ss (code, ins->dreg, ins->sreg2);
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(2, 1, 0, 3));
+				break;
+			case 3:
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(3, 1, 2, 0));
+				if (cfg->r4fp)
+					s390x_movss (code, ins->dreg, ins->sreg2);
+				else
+					s390x_cvtsd2ss (code, ins->dreg, ins->sreg2);
+				s390x_pshufd_imm (code, ins->dreg, ins->dreg, mono_simd_shuffle_mask(3, 1, 2, 0));
+				break;
+			}
+			break;
+		case OP_INSERTX_R8_SLOW:
+			if (ins->inst_c0)
+				amd64_movlhps (code, ins->dreg, ins->sreg2);
+			else
+				s390x_movsd (code, ins->dreg, ins->sreg2);
+			break;
+		case OP_STOREX_MEMBASE_REG:
+		case OP_STOREX_MEMBASE:
+			s390x_movups_membase_reg (code, ins->dreg, ins->inst_offset, ins->sreg1);
+			break;
+		case OP_LOADX_MEMBASE:
+			s390x_movups_reg_membase (code, ins->dreg, ins->sreg1, ins->inst_offset);
+			break;
+		case OP_LOADX_ALIGNED_MEMBASE:
+			s390x_movaps_reg_membase (code, ins->dreg, ins->sreg1, ins->inst_offset);
+			break;
+		case OP_STOREX_ALIGNED_MEMBASE_REG:
+			s390x_movaps_membase_reg (code, ins->dreg, ins->inst_offset, ins->sreg1);
+			break;
+		case OP_STOREX_NTA_MEMBASE_REG:
+			s390x_movntps_reg_membase (code, ins->dreg, ins->sreg1, ins->inst_offset);
+			break;
+		case OP_PREFETCH_MEMBASE:
+			s390x_prefetch_reg_membase (code, ins->backend.arg_info, ins->sreg1, ins->inst_offset);
+			break;
+
+		case OP_XMOVE:
+			/*FIXME the peephole pass should have killed this*/
+			if (ins->dreg != ins->sreg1)
+				s390x_movaps (code, ins->dreg, ins->sreg1);
+			break;		
+		case OP_XZERO:
+			s390x_pxor (code, ins->dreg, ins->dreg);
+			break;
+		case OP_ICONV_TO_R4_RAW:
+			amd64_movd_xreg_reg_size (code, ins->dreg, ins->sreg1, 4);
+			break;
+
+		case OP_FCONV_TO_R8_X:
+			s390x_movsd (code, ins->dreg, ins->sreg1);
+			break;
+
+		case OP_XCONV_R8_TO_I4:
+			s390x_cvttsd2si_reg_xreg_size (code, ins->dreg, ins->sreg1, 4);
+			switch (ins->backend.source_opcode) {
+			case OP_FCONV_TO_I1:
+				amd64_widen_reg (code, ins->dreg, ins->dreg, TRUE, FALSE);
+				break;
+			case OP_FCONV_TO_U1:
+				amd64_widen_reg (code, ins->dreg, ins->dreg, FALSE, FALSE);
+				break;
+			case OP_FCONV_TO_I2:
+				amd64_widen_reg (code, ins->dreg, ins->dreg, TRUE, TRUE);
+				break;
+			case OP_FCONV_TO_U2:
+				amd64_widen_reg (code, ins->dreg, ins->dreg, FALSE, TRUE);
+				break;
+			}			
+			break;
+
+		case OP_EXPAND_I2:
+			s390x_pinsrw_imm (code, ins->dreg, ins->sreg1, 0);
+			s390x_pinsrw_imm (code, ins->dreg, ins->sreg1, 1);
+			s390x_pshufd_imm (code, ins->dreg, ins->dreg, 0);
+			break;
+		case OP_EXPAND_I4:
+			amd64_movd_xreg_reg_size (code, ins->dreg, ins->sreg1, 4);
+			s390x_pshufd_imm (code, ins->dreg, ins->dreg, 0);
+			break;
+		case OP_EXPAND_I8:
+			amd64_movd_xreg_reg_size (code, ins->dreg, ins->sreg1, 8);
+			s390x_pshufd_imm (code, ins->dreg, ins->dreg, 0x44);
+			break;
+		case OP_EXPAND_R4:
+			if (cfg->r4fp) {
+				s390x_movsd (code, ins->dreg, ins->sreg1);
+			} else {
+				s390x_movsd (code, ins->dreg, ins->sreg1);
+				s390x_cvtsd2ss (code, ins->dreg, ins->dreg);
+			}
+			s390x_pshufd_imm (code, ins->dreg, ins->dreg, 0);
+			break;
+		case OP_EXPAND_R8:
+			s390x_movsd (code, ins->dreg, ins->sreg1);
+			s390x_pshufd_imm (code, ins->dreg, ins->dreg, 0x44);
+			break;
+#endif
 		default:
 			g_warning ("unknown opcode %s in %s()\n", mono_inst_name (ins->opcode), __FUNCTION__);
 			g_assert_not_reached ();
@@ -4683,16 +5399,20 @@ mono_arch_register_lowlevel_calls (void)
 
 void
 mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain, 
-		      guint8 *code, MonoJumpInfo *ji, gboolean run_cctors)
+		      guint8 *code, MonoJumpInfo *ji, gboolean run_cctors,
+		      MonoError *error)
 {
 	MonoJumpInfo *patch_info;
+
+	mono_error_init (error);
 
 	for (patch_info = ji; patch_info; patch_info = patch_info->next) {
 		unsigned char *ip = patch_info->ip.i + code;
 		gconstpointer target = NULL;
 
 		target = mono_resolve_patch_target (method, domain, code, 
-						    patch_info, run_cctors);
+											patch_info, run_cctors, error);
+		return_if_nok (error);
 
 		switch (patch_info->type) {
 			case MONO_PATCH_INFO_IP:
@@ -4705,11 +5425,7 @@ mono_arch_patch_code (MonoCompile *cfg, MonoMethod *method, MonoDomain *domain,
 			case MONO_PATCH_INFO_METHOD:
 			case MONO_PATCH_INFO_INTERNAL_METHOD:
 			case MONO_PATCH_INFO_JIT_ICALL_ADDR:
-			case MONO_PATCH_INFO_CLASS_INIT:
 			case MONO_PATCH_INFO_RGCTX_FETCH:
-			case MONO_PATCH_INFO_MONITOR_ENTER:
-			case MONO_PATCH_INFO_MONITOR_ENTER_V4:
-			case MONO_PATCH_INFO_MONITOR_EXIT:
 			case MONO_PATCH_INFO_ABS: {
 				S390_EMIT_CALL (ip, target);
 				continue;
@@ -4874,8 +5590,10 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 	guint8 *code;
 	guint32 size;
 	CallInfo *cinfo;
-	int tracing = 0;
-	int lmfOffset;
+	int tracing = 0,
+            argsClobbered = 0,
+	    lmfOffset,
+	    fpOffset;
 
 	cfg->code_size   = 512;
 
@@ -4894,6 +5612,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 	emit_unwind_regs(cfg, code, s390_r6, s390_r14, S390_REG_SAVE_OFFSET);
 	s390_stmg (code, s390_r6, s390_r14, STK_BASE, S390_REG_SAVE_OFFSET);
 	mono_emit_unwind_op_offset (cfg, code, s390_r14, S390_RET_ADDR_OFFSET);
+	mini_gc_set_slot_type_from_cfa (cfg, S390_RET_ADDR_OFFSET, SLOT_NOREF);
 
 	if (cfg->arch.bkchain_reg != -1)
 		s390_lgr (code, cfg->arch.bkchain_reg, STK_BASE);
@@ -5080,6 +5799,12 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		s390_stmg  (code, s390_r2, s390_r6, s390_r13,
 			    G_STRUCT_OFFSET(MonoLMF, pregs[0]));
 
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, pregs[0]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, pregs[1]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, pregs[2]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, pregs[3]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, pregs[4]), SLOT_NOREF);
+
 		/*---------------------------------------------------------------*/
 		/* On return from this call r2 have the address of the &lmf	 */
 		/*---------------------------------------------------------------*/
@@ -5103,6 +5828,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		/*---------------------------------------------------------------*/	
 		s390_stg   (code, s390_r2, 0, s390_r13, 				
 			    G_STRUCT_OFFSET(MonoLMF, lmf_addr));			
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, lmf_addr), SLOT_NOREF);
 											
 		/*---------------------------------------------------------------*/	
 		/* Get current lmf						 */	
@@ -5119,6 +5845,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		/*---------------------------------------------------------------*/	
 		s390_stg   (code, s390_r0, 0, s390_r13, 				
 			    G_STRUCT_OFFSET(MonoLMF, previous_lmf));			
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, previous_lmf), SLOT_NOREF);
 											
 		/*---------------------------------------------------------------*/	
 		/* save method info						 */	
@@ -5126,6 +5853,7 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		S390_SET   (code, s390_r1, method);
 		s390_stg   (code, s390_r1, 0, s390_r13, 				
 			    G_STRUCT_OFFSET(MonoLMF, method));				
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, method), SLOT_NOREF);
 										
 		/*---------------------------------------------------------------*/	
 		/* save the current IP						 */	
@@ -5133,15 +5861,32 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 		s390_stg   (code, STK_BASE, 0, s390_r13, G_STRUCT_OFFSET(MonoLMF, ebp));
 		s390_basr  (code, s390_r1, 0);
 		s390_stg   (code, s390_r1, 0, s390_r13, G_STRUCT_OFFSET(MonoLMF, eip));	
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, ebp), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, eip), SLOT_NOREF);
 											
 		/*---------------------------------------------------------------*/	
 		/* Save general and floating point registers			 */	
 		/*---------------------------------------------------------------*/	
 		s390_stmg  (code, s390_r2, s390_r12, s390_r13, 				
 			    G_STRUCT_OFFSET(MonoLMF, gregs[2]));			
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[0]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[1]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[2]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[3]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[4]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[5]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[6]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[7]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[8]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[9]), SLOT_NOREF);
+		mini_gc_set_slot_type_from_fp (cfg, lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, gregs[10]), SLOT_NOREF);
+
+		fpOffset = lmfOffset + MONO_STRUCT_OFFSET (MonoLMF, fregs[0]);
 		for (i = 0; i < 16; i++) {						
 			s390_std  (code, i, 0, s390_r13, 				
 				   G_STRUCT_OFFSET(MonoLMF, fregs[i]));			
+			mini_gc_set_slot_type_from_fp (cfg, fpOffset, SLOT_NOREF);
+			fpOffset += sizeof(double);
 		}									
 
 		/*---------------------------------------------------------------*/
@@ -5151,8 +5896,87 @@ mono_arch_emit_prolog (MonoCompile *cfg)
 			    G_STRUCT_OFFSET(MonoLMF, pregs[0]));			
 	}
 
-	if (tracing)
-		code = mono_arch_instrument_prolog(cfg, enter_method, code, TRUE);
+	if (cfg->method->save_lmf)
+		argsClobbered = TRUE;
+
+	if (tracing) {
+		argsClobbered = TRUE;
+		code = mono_arch_instrument_prolog (cfg, enter_method, code, TRUE);
+	}
+
+	if (cfg->prof_options & MONO_PROFILE_ENTER_LEAVE)
+		argsClobbered = TRUE;
+
+	/*
+	 * Optimize the common case of the first bblock making a call with the same
+	 * arguments as the method. This works because the arguments are still in their
+	 * original argument registers.
+	 */
+	if (!argsClobbered) {
+		MonoBasicBlock *first_bb = cfg->bb_entry;
+		MonoInst *next;
+		int filter = FILTER_IL_SEQ_POINT;
+
+		next = mono_bb_first_inst (first_bb, filter);
+		if (!next && first_bb->next_bb) {
+			first_bb = first_bb->next_bb;
+			next = mono_bb_first_inst (first_bb, filter);
+		}
+
+		if (first_bb->in_count > 1)
+			next = NULL;
+
+		for (i = 0; next && i < sig->param_count + sig->hasthis; ++i) {
+			ArgInfo *ainfo = cinfo->args + i;
+			gboolean match = FALSE;
+
+			inst = cfg->args [i];
+			if (inst->opcode != OP_REGVAR) {
+				switch (ainfo->regtype) {
+				case RegTypeGeneral: {
+					if (((next->opcode == OP_LOAD_MEMBASE) || 
+					     (next->opcode == OP_LOADI4_MEMBASE)) && 
+					     next->inst_basereg == inst->inst_basereg && 
+					     next->inst_offset == inst->inst_offset) {
+						if (next->dreg == ainfo->reg) {
+							NULLIFY_INS (next);
+							match = TRUE;
+						} else {
+							next->opcode = OP_MOVE;
+							next->sreg1 = ainfo->reg;
+							/* Only continue if the instruction doesn't change argument regs */
+							if (next->dreg == ainfo->reg)
+								match = TRUE;
+						}
+					}
+					break;
+				}
+				default:
+					break;
+				}
+			} else {
+				/* Argument allocated to (non-volatile) register */
+				switch (ainfo->regtype) {
+				case RegTypeGeneral:
+					if (next->opcode == OP_MOVE && 
+					    next->sreg1 == inst->dreg && 
+					    next->dreg == ainfo->reg) {
+						NULLIFY_INS (next);
+						match = TRUE;
+					}
+					break;
+				default:
+					break;
+				}
+			}
+
+			if (match) {
+				next = mono_inst_next (next, filter);
+				if (!next)
+					break;
+			}
+		}
+	}
 
 	cfg->code_len = code - cfg->native_code;
 	g_assert (cfg->code_len < cfg->code_size);
@@ -5270,10 +6094,9 @@ mono_arch_emit_exceptions (MonoCompile *cfg)
 			/*-----------------------------------------------------*/
 			s390_patch_rel (ip + 2, (guint64) S390_RELATIVE(code,ip));
 
-			exc_class = mono_class_from_name (mono_defaults.corlib, 
+			exc_class = mono_class_load_from_name (mono_defaults.corlib,
 							  "System", 
 							  patch_info->data.name);
-			g_assert (exc_class);
 			throw_ip = patch_info->ip.i;
 
 			for (iExc = 0; iExc < nThrows; ++iExc)
@@ -5647,7 +6470,7 @@ mono_arch_install_handler_block_guard (MonoJitInfo *ji, MonoJitExceptionInfo *cl
 /*------------------------------------------------------------------*/
 
 static gpointer
-get_delegate_invoke_impl (gboolean has_target, guint32 param_count, guint32 *code_len, gboolean aot)
+get_delegate_invoke_impl (MonoTrampInfo **info, gboolean has_target, guint32 param_count, gboolean aot)
 {
 	guint8 *code, *start;
 
@@ -5683,8 +6506,13 @@ get_delegate_invoke_impl (gboolean has_target, guint32 param_count, guint32 *cod
 
 	mono_profiler_code_buffer_new (start, code - start, MONO_PROFILER_CODE_BUFFER_DELEGATE_INVOKE, NULL);
 
-	if (code_len)
-		*code_len = code - start;
+	if (has_target) {
+		*info = mono_tramp_info_create ("delegate_invoke_impl_has_target", start, code - start, NULL, NULL);
+	} else {
+		char *name = g_strdup_printf ("delegate_invoke_impl_target_%d", param_count);
+		*info = mono_tramp_info_create (name, start, code - start, NULL, NULL);
+		g_free (name);
+	}
 
 	return start;
 }
@@ -5703,19 +6531,15 @@ GSList*
 mono_arch_get_delegate_invoke_impls (void)
 {
 	GSList *res = NULL;
-	guint8 *code;
-	guint32 code_len;
+	MonoTrampInfo *info;
 	int i;
-	char *tramp_name;
 
-	code = get_delegate_invoke_impl (TRUE, 0, &code_len, TRUE);
-	res = g_slist_prepend (res, mono_tramp_info_create ("delegate_invoke_impl_has_target", code, code_len, NULL, NULL));
+	get_delegate_invoke_impl (&info, TRUE, 0, TRUE);
+	res = g_slist_prepend (res, info);
 
-	for (i = 0; i < MAX_ARCH_DELEGATE_PARAMS; ++i) {
-		code = get_delegate_invoke_impl (FALSE, i, &code_len, TRUE);
-		tramp_name = g_strdup_printf ("delegate_invoke_impl_target_%d", i);
-		res = g_slist_prepend (res, mono_tramp_info_create (tramp_name, code, code_len, NULL, NULL));
-		g_free (tramp_name);
+	for (i = 0; i <= MAX_ARCH_DELEGATE_PARAMS; ++i) {
+		get_delegate_invoke_impl (&info, FALSE, i, TRUE);
+		res = g_slist_prepend (res, info);
 	}
 
 	return res;
@@ -5746,10 +6570,13 @@ mono_arch_get_delegate_invoke_impl (MonoMethodSignature *sig, gboolean has_targe
 		if (cached)
 			return cached;
 
-		if (mono_aot_only)
+		if (mono_aot_only) {
 			start = mono_aot_get_trampoline ("delegate_invoke_impl_has_target");
-		else
-			start = get_delegate_invoke_impl (TRUE, 0, NULL, FALSE);
+		} else {
+			MonoTrampInfo *info;
+			start = get_delegate_invoke_impl (&info, TRUE, 0, FALSE);
+			mono_tramp_info_register (info, NULL);
+		}
 
 		mono_memory_barrier ();
 
@@ -5774,7 +6601,9 @@ mono_arch_get_delegate_invoke_impl (MonoMethodSignature *sig, gboolean has_targe
 			start = mono_aot_get_trampoline (name);
 			g_free (name);
 		} else {
-			start = get_delegate_invoke_impl (FALSE, sig->param_count, NULL, FALSE);
+			MonoTrampInfo *info;
+			start = get_delegate_invoke_impl (&info, FALSE, sig->param_count, FALSE);
+			mono_tramp_info_register (info, NULL);
 		}
 
 		mono_memory_barrier ();
@@ -5833,20 +6662,21 @@ mono_arch_get_delegate_virtual_invoke_impl (MonoMethodSignature *sig, MonoMethod
 
 /*------------------------------------------------------------------*/
 /*                                                                  */
-/* Name		- mono_arch_build_imt_thunk.                        */
+/* Name		- mono_arch_build_imt_trampoline.                       */
 /*                                                                  */
 /* Function	- 						    */
 /*		                               			    */
 /*------------------------------------------------------------------*/
 
 gpointer
-mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain, 
-			   MonoIMTCheckItem **imt_entries, int count,
-			   gpointer fail_tramp)
+mono_arch_build_imt_trampoline (MonoVTable *vtable, MonoDomain *domain, 
+								MonoIMTCheckItem **imt_entries, int count,
+								gpointer fail_tramp)
 {
 	int i;
 	int size = 0;
 	guchar *code, *start;
+	char trampName[64];
 
 	for (i = 0; i < count; ++i) {
 		MonoIMTCheckItem *item = imt_entries [i];
@@ -5880,7 +6710,7 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain,
 	}
 
 	if (fail_tramp)
-		code = mono_method_alloc_generic_virtual_thunk (domain, size);
+		code = mono_method_alloc_generic_virtual_trampoline (domain, size);
 	else
 		code = mono_domain_code_reserve (domain, size);
 
@@ -5963,9 +6793,12 @@ mono_arch_build_imt_thunk (MonoVTable *vtable, MonoDomain *domain,
 	mono_profiler_code_buffer_new (start, code - start, MONO_PROFILER_CODE_BUFFER_IMT_TRAMPOLINE, NULL);
 
 	if (!fail_tramp) 
-		mono_stats.imt_thunks_size += (code - start);
+		mono_stats.imt_trampolines_size += (code - start);
 
 	g_assert (code - start <= size);
+
+	snprintf(trampName, sizeof(trampName), "%d_imt_trampoline", domain->domain_id);
+	mono_tramp_info_register (mono_tramp_info_create (trampName, start, code - start, NULL, NULL), domain);
 
 	return (start);
 }
@@ -6205,9 +7038,11 @@ mono_arch_get_seq_point_info (MonoDomain *domain, guint8 *code)
 	return NULL;
 }
 
+/*========================= End of Function ========================*/
+
 /*------------------------------------------------------------------*/
 /*                                                                  */
-/* Name		- mono_arch_init_lmf_ext.                               */
+/* Name		- mono_arch_init_lmf_ext.                           */
 /*                                                                  */
 /* Function -                                                       */
 /*                                                                  */
@@ -6226,6 +7061,39 @@ mono_arch_init_lmf_ext (MonoLMFExt *ext, gpointer prev_lmf)
 
 #endif
 
+/*------------------------------------------------------------------*/
+/*                                                                  */
+/* Name	    - mono_arch_cpu_enumerate_simd_versions.                */
+/*                                                                  */
+/* Function - If this CPU supports vector operations then it        */
+/*            supports the equivalent of SSE1-4.                    */
+/*                                                                  */
+/*------------------------------------------------------------------*/
+
+guint32
+mono_arch_cpu_enumerate_simd_versions (void)
+{
+	guint32 sseOpts = 0;
+
+	if (mono_hwcap_s390x_has_vec)
+		sseOpts = (SIMD_VERSION_SSE1  | SIMD_VERSION_SSE2 |
+		           SIMD_VERSION_SSE3  | SIMD_VERSION_SSSE3 |
+		           SIMD_VERSION_SSE41 | SIMD_VERSION_SSE42 |
+			   SIMD_VERSION_SSE4a);
+
+	return (sseOpts);
+}
+
+/*========================= End of Function ========================*/
+
+/*------------------------------------------------------------------*/
+/*                                                                  */
+/* Name	    - mono_arch_opcode_supported.                           */
+/*                                                                  */
+/* Function - Check if a given return code is supported.            */
+/*                                                                  */
+/*------------------------------------------------------------------*/
+
 gboolean
 mono_arch_opcode_supported (int opcode)
 {
@@ -6239,3 +7107,5 @@ mono_arch_opcode_supported (int opcode)
 		return FALSE;
 	}
 }
+
+/*========================= End of Function ========================*/

@@ -184,7 +184,10 @@ namespace MonoTests.System.Security.Policy {
 		// files are always rooted (Path.IsPathRooted) and exists (File.Exists)
 		string[] myComputerUrls = {
 			Path.GetTempFileName (),
+#if !MONODROID
+			// Assembly.Location doesn't work on Android
 			Assembly.GetExecutingAssembly ().Location,
+#endif
 		};
 
 		[Test]
@@ -226,7 +229,7 @@ namespace MonoTests.System.Security.Policy {
 			"http://*.go-mono.com",
 			"http://www.go-mono.com:8080/index.html",
 			"mono://unknown/protocol",
-			Path.DirectorySeparatorChar + "mono" + Path.DirectorySeparatorChar + "index.html",
+			"/mono/index.html",
 		};
 
 		[Test]

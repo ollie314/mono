@@ -59,6 +59,10 @@ void mono_profiler_class_loaded (MonoClass *klass, int result);
 
 void mono_profiler_appdomain_event  (MonoDomain *domain, int code);
 void mono_profiler_appdomain_loaded (MonoDomain *domain, int result);
+void mono_profiler_appdomain_name   (MonoDomain *domain, const char *name);
+
+void mono_profiler_context_loaded (MonoAppContext *context);
+void mono_profiler_context_unloaded (MonoAppContext *context);
 
 void mono_profiler_iomap (char *report, const char *pathname, const char *new_pathname);
 
@@ -70,6 +74,11 @@ void mono_profiler_gc_heap_resize (gint64 new_size);
 void mono_profiler_gc_moves       (void **objects, int num);
 void mono_profiler_gc_handle      (int op, int type, uintptr_t handle, MonoObject *obj);
 void mono_profiler_gc_roots       (int num, void **objects, int *root_types, uintptr_t *extra_info);
+
+void mono_profiler_gc_finalize_begin (void);
+void mono_profiler_gc_finalize_object_begin (MonoObject *obj);
+void mono_profiler_gc_finalize_object_end (MonoObject *obj);
+void mono_profiler_gc_finalize_end (void);
 
 void mono_profiler_code_chunk_new (gpointer chunk, int size);
 void mono_profiler_code_chunk_destroy (gpointer chunk);

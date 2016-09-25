@@ -59,7 +59,6 @@ namespace System.Globalization
 		[NonSerialized]
 		int default_calendar_type;
 		bool m_useUserOverride;
-		[NonSerialized]
 		internal volatile NumberFormatInfo numInfo;
 		internal volatile DateTimeFormatInfo dateTimeInfo;
 		volatile TextInfo textInfo;
@@ -117,6 +116,9 @@ namespace System.Globalization
 		const int CalendarTypeBits = 8;
 
 		const string MSG_READONLY = "This instance is read only";
+
+		static volatile CultureInfo s_DefaultThreadCurrentUICulture;
+		static volatile CultureInfo s_DefaultThreadCurrentCulture;
 		
 		public static CultureInfo InvariantCulture {
 			get {
@@ -128,11 +130,17 @@ namespace System.Globalization
 			get {
 				return Thread.CurrentThread.CurrentCulture;
 			}
+			set {
+				Thread.CurrentThread.CurrentCulture = value;
+			}
 		}
 
 		public static CultureInfo CurrentUICulture { 
 			get {
 				return Thread.CurrentThread.CurrentUICulture;
+			}
+			set {
+				Thread.CurrentThread.CurrentUICulture = value;
 			}
 		}
 
@@ -143,9 +151,12 @@ namespace System.Globalization
 
 			var locale_name = get_current_locale_name ();
 			CultureInfo ci = null;
-			try {
-				ci = CreateSpecificCulture (locale_name);
-			} catch {
+
+			if (locale_name != null) {
+				try {
+					ci = CreateSpecificCulture (locale_name);
+				} catch {
+				}
 			}
 
 			if (ci == null) {
@@ -169,7 +180,7 @@ namespace System.Globalization
 			get { return territory; }
 		}
 
-#if !NET_2_1
+#if !MOBILE
 		// FIXME: It is implemented, but would be hell slow.
 		[ComVisible (false)]
 		public CultureTypes CultureTypes {
@@ -411,10 +422,7 @@ namespace System.Globalization
 		public override bool Equals (object value)
 		{
 			CultureInfo b = value as CultureInfo;
-			
-			if (b != null)
-				return b.cultureID == cultureID;
-			return false;
+			return b != null && b.cultureID == cultureID && b.m_name == m_name;
 		}
 
 		public static CultureInfo[] GetCultures(CultureTypes types)
@@ -506,7 +514,7 @@ namespace System.Globalization
 			}
 		}
 
-		internal void CheckNeutral ()
+		void CheckNeutral ()
 		{
 		}
 
@@ -629,7 +637,7 @@ namespace System.Globalization
 				numInfo = (NumberFormatInfo) numInfo.Clone ();
 			}
 
-			textInfo = CreateTextInfo (read_only);
+			textInfo = TextInfo.Invariant;
 
 			m_name=String.Empty;
 			englishname=
@@ -732,6 +740,9 @@ namespace System.Globalization
 		
 		public static CultureInfo GetCultureInfo (int culture)
 		{
+			if (culture < 1)
+				throw new ArgumentOutOfRangeException ("culture", "Positive number required.");
+
 			CultureInfo c;
 			
 			lock (shared_table_lock){
@@ -819,8 +830,15 @@ namespace System.Globalization
 			CultureInfo ci = new CultureInfo ();
 
 			if (!ci.construct_internal_locale_from_name (name)) {
-				int idx = name.IndexOf ('-');
-				if (idx < 1 || !ci.construct_internal_locale_from_name (name.Substring (0, idx)))
+				int idx = name.Length - 1;
+				if (idx > 0) {
+					while ((idx = name.LastIndexOf ('-', idx - 1)) > 0) {
+						if (ci.construct_internal_locale_from_name (name.Substring (0, idx)))
+							break;
+					}
+				}
+
+				if (idx <= 0)
 					throw CreateNotFoundException (src_name);
 			}
 
@@ -1055,19 +1073,19 @@ namespace System.Globalization
 		
 		public static CultureInfo DefaultThreadCurrentCulture {
 			get {
-				return Thread.default_culture;
+				return s_DefaultThreadCurrentCulture;
 			}
 			set {
-				Thread.default_culture = value;
+				s_DefaultThreadCurrentCulture = value;
 			}
 		}
 		
 		public static CultureInfo DefaultThreadCurrentUICulture {
 			get {
-				return Thread.default_ui_culture;
+				return s_DefaultThreadCurrentUICulture;
 			}
 			set {
-				Thread.default_ui_culture = value;
+				s_DefaultThreadCurrentUICulture = value;
 			}
 		}
 
@@ -1076,6 +1094,19 @@ namespace System.Globalization
 				return m_name;
 			}
 		}
+
+		internal static CultureInfo UserDefaultUICulture {
+			get {
+				return ConstructCurrentUICulture ();
+			}
+		}
+
+		internal static CultureInfo UserDefaultCulture {
+			get {
+				return ConstructCurrentCulture ();
+			}
+		}
+
 
 #region reference sources
 		// TODO:
@@ -1127,6 +1158,19 @@ namespace System.Globalization
                 return false;
             }
             return true;
+        }
+
+        internal static bool VerifyCultureName(CultureInfo culture, bool throwException) {
+            Contract.Assert(culture!=null, "[CultureInfo.VerifyCultureName]culture!=null");
+
+            //If we have an instance of one of our CultureInfos, the user can't have changed the
+            //name and we know that all names are valid in files.
+            if (!culture.m_isInherited) {
+                return true;
+            }
+
+            return VerifyCultureName(culture.Name, throwException);
+
         }
 
 #endregion

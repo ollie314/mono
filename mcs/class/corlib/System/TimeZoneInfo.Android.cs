@@ -266,7 +266,7 @@ namespace System {
 			return timeZoneInfo;
 		}
 
-		static void GetSystemTimeZones (List<TimeZoneInfo> systemTimeZones)
+		static void GetSystemTimeZonesCore (List<TimeZoneInfo> systemTimeZones)
 		{
 			foreach (string id in AndroidTimeZones.GetAvailableIds ()) {
 				var tz = AndroidTimeZones.GetTimeZone (id, id);
@@ -553,11 +553,10 @@ namespace System {
 					return sign * (hour * 60) * 60;
 			}
 
-			static TimeZoneInfo defaultZone;
 			internal static TimeZoneInfo Local {
 				get {
 					var id  = GetDefaultTimeZoneName ();
-					return defaultZone = GetTimeZone (id, id);
+					return GetTimeZone (id, id);
 				}
 			}
 			

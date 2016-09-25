@@ -93,6 +93,8 @@ namespace Mono.Linker {
 			set { _symbolWriterProvider = value; }
 		}
 
+		public bool LogInternalExceptions { get; set; } = false;
+
 		public LinkContext (Pipeline pipeline)
 			: this (pipeline, new AssemblyResolver ())
 		{
@@ -176,7 +178,7 @@ namespace Mono.Linker {
 				if (_symbolReaderProvider != null) {
 					var symbolReader = _symbolReaderProvider.GetSymbolReader (
 						assembly.MainModule,
-						assembly.MainModule.FullyQualifiedName);
+						assembly.MainModule.FileName);
 
 					_annotations.AddSymbolReader (assembly, symbolReader);
 					assembly.MainModule.ReadSymbols (symbolReader);

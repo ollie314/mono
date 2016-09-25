@@ -1,5 +1,6 @@
 //
 // Copyright 2011 Xamarin Inc (http://www.xamarin.com).
+// Licensed under the MIT license. See LICENSE file in the project root for full license information.
 //
 
 using System;
@@ -8,7 +9,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.CompilerServices;
 using System.Reflection.Emit;
 
-public class Tests {
+public unsafe class Tests {
 
 	public int int_field;
 
@@ -59,6 +60,10 @@ public class Tests {
 
 	[StructLayout (LayoutKind.Sequential, Size=0)]
 	public struct EmptyStruct {
+	}
+
+	[StructLayout (LayoutKind.Sequential, Size=1)]
+	public struct EmptyStructCpp {
 	}
 
 	[StructLayout (LayoutKind.Sequential)]
@@ -230,6 +235,9 @@ public class Tests {
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_out_byref_array_out_size_param")]
 	public static extern int mono_test_marshal_out_byref_array_out_size_param ([Out] [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] out int [] a1, out int n);
 
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_out_lparray_out_size_param")]
+	public static extern int mono_test_marshal_out_lparray_out_size_param ([Out] [MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)] int [] a1, out int n);
+
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_inout_nonblittable_array", CharSet = CharSet.Unicode)]
 	public static extern int mono_test_marshal_inout_nonblittable_array ([In, Out] char [] a1);
 	
@@ -262,6 +270,12 @@ public class Tests {
 
 	[DllImport ("libtest", EntryPoint="mono_test_empty_struct")]
 	public static extern int mono_test_empty_struct (int a, EmptyStruct es, int b);
+
+	[DllImport ("libtest", EntryPoint="mono_test_return_empty_struct")]
+	public static extern EmptyStruct mono_test_return_empty_struct (int a);
+
+	[DllImport ("libtest", EntryPoint="mono_test_return_empty_struct")]
+	public static extern EmptyStructCpp mono_test_return_empty_struct_cpp (int a);
 
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_lpstruct")]
 	public static extern int mono_test_marshal_lpstruct ([In, MarshalAs(UnmanagedType.LPStruct)] SimpleStruct ss);
@@ -424,6 +438,22 @@ public class Tests {
 		return 0;
 	}
 
+	public static int test_0_marshal_out_lparray_out_size_param () {
+		int [] a1 = null;
+		int len;
+
+		a1 = new int [10];
+		int res = mono_test_marshal_out_lparray_out_size_param (a1, out len);
+		// Check that a1 was not overwritten
+		a1.GetHashCode ();
+		if (len != 4)
+			return 1;
+		for (int i = 0; i < len; i++)
+			if (a1 [i] != i)
+				return 2;
+		return 0;
+	}
+
 	public static int test_0_marshal_inout_nonblittable_array () {
 		char [] a1 = new char [10];
 		for (int i = 0; i < 10; i++)
@@ -483,9 +513,22 @@ public class Tests {
 
 		if (mono_test_empty_struct (1, es, 2) != 0)
 			return 1;
+
+		mono_test_return_empty_struct (42);
+
+		return 0;
+	}
+
+	/* FIXME: This doesn't work on all platforms */
+	/*
+	public static int test_0_marshal_empty_struct_cpp () {
+		EmptyStructCpp es = new EmptyStructCpp ();
+
+		mono_test_return_empty_struct_cpp (42);
 		
 		return 0;
 	}
+	*/
 
 	public static int test_0_marshal_lpstruct () {
 		SimpleStruct ss = new  SimpleStruct ();
@@ -1390,6 +1433,13 @@ public class Tests {
 		return mono_test_stdcall_name_mangling (0, 1, 2) == 3 ? 0 : 1;
 	}
 
+	/* Test multiple calls to stdcall wrapper, xamarin bug 30146 */
+	public static int test_0_stdcall_many_calls () {
+		for (int i=0; i<256; i++)
+			mono_test_stdcall_name_mangling (0, 0, 0);
+		return 0;
+	}
+
 	/* Float test */
 
 	[DllImport ("libtest", EntryPoint="mono_test_marshal_pass_return_float")]
@@ -1853,6 +1903,24 @@ public class Tests {
 			return 1;
 		else
 			return 0;
+	}
+
+    [StructLayout(LayoutKind.Explicit, Size = 12)]
+	public struct FixedArrayStruct {
+        [FieldOffset(0)]
+        public fixed int array[3];
+	}
+
+	[DllImport ("libtest", EntryPoint="mono_test_marshal_fixed_array")]
+	public static extern int mono_test_marshal_fixed_array (FixedArrayStruct s);
+
+	public static unsafe int test_6_fixed_array_struct () {
+		var s = new FixedArrayStruct ();
+		s.array [0] = 1;
+		s.array [1] = 2;
+		s.array [2] = 3;
+
+		return mono_test_marshal_fixed_array (s);
 	}
 }
 

@@ -21,6 +21,7 @@
 
 extern MonoBoolean ves_icall_System_Net_NetworkInformation_MacOsIPInterfaceProperties_ParseRouteInfo_internal(MonoString *iface, MonoArray **gw_addr_list)
 {
+	MonoError error;
 	size_t needed;
 	in_addr_t in;
 	int mib[6];
@@ -31,7 +32,10 @@ extern MonoBoolean ves_icall_System_Net_NetworkInformation_MacOsIPInterfacePrope
 
 	MonoDomain *domain = mono_domain_get ();
 
-	ifacename = mono_string_to_utf8(iface);
+	ifacename = mono_string_to_utf8_checked(iface, &error);
+	if (mono_error_set_pending_exception (&error))
+		return FALSE;
+
 	if ((ifindex = if_nametoindex(ifacename)) == 0)
 		return FALSE;
 	g_free(ifacename);
@@ -49,7 +53,7 @@ extern MonoBoolean ves_icall_System_Net_NetworkInformation_MacOsIPInterfacePrope
 		return FALSE;
 
 	// Allocate suffcient memory for available data based on the previous sysctl call
-	if ((buf = malloc(needed)) == NULL)
+	if ((buf = g_malloc (needed)) == NULL)
 		return FALSE;
 
 	// Second sysctl call to retrieve data into appropriately sized buffer
@@ -98,7 +102,7 @@ extern MonoBoolean ves_icall_System_Net_NetworkInformation_MacOsIPInterfacePrope
 		mono_array_setref (*gw_addr_list, gwnum, addr_string);
 		gwnum++;
 	}
-	free(buf);
+	g_free (buf);
 	return TRUE;
 }
 

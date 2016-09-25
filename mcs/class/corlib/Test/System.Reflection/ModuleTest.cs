@@ -10,7 +10,7 @@
 using System;
 using System.Threading;
 using System.Reflection;
-#if !MONOTOUCH
+#if !MONOTOUCH && !MOBILE_STATIC
 using System.Reflection.Emit;
 #endif
 using System.Runtime.Serialization;
@@ -24,13 +24,26 @@ namespace MonoTests.System.Reflection
 [TestFixture]
 public class ModuleTest
 {
-	static string TempFolder = Path.Combine (Path.GetTempPath (), "MonoTests.System.Reflection.ModuleTest");
+	static string BaseTempFolder = Path.Combine (Path.GetTempPath (), "MonoTests.System.Reflection.ModuleTest");
+	static string TempFolder;
+
+	[TestFixtureSetUp]
+	public void FixtureSetUp ()
+	{
+		try {
+			// Try to cleanup from any previous NUnit run.
+			Directory.Delete (BaseTempFolder, true);
+		} catch (Exception) {
+		}
+	}
 
 	[SetUp]
 	public void SetUp ()
 	{
-		while (Directory.Exists (TempFolder))
-			TempFolder = Path.Combine (TempFolder, "2");
+		int i = 0;
+		do {
+			TempFolder = Path.Combine (BaseTempFolder, (++i).ToString());
+		} while (Directory.Exists (TempFolder));
 		Directory.CreateDirectory (TempFolder);
 	}
 
@@ -38,8 +51,8 @@ public class ModuleTest
 	public void TearDown ()
 	{
 		try {
-			// This throws an exception under MS.NET, since the directory contains loaded
-			// assemblies.
+			// This throws an exception under MS.NET and Mono on Windows,
+			// since the directory contains loaded assemblies.
 			Directory.Delete (TempFolder, true);
 		} catch (Exception) {
 		}
@@ -93,7 +106,7 @@ public class ModuleTest
 	}
 
 	// Some of these tests overlap with the tests for ModuleBuilder
-#if !MONOTOUCH
+#if !MONOTOUCH && !MOBILE_STATIC
 	[Test]
 	[Category("NotDotNet")] // path length can cause suprious failures
 	public void TestGlobalData () {
@@ -193,19 +206,19 @@ public class ModuleTest
 
 		try {
 			module.ResolveMethod (1234);
-			Assert.Fail ();
+			Assert.Fail ("1234");
 		} catch (ArgumentException) {
 		}
 
 		try {
 			module.ResolveMethod (t.MetadataToken);
-			Assert.Fail ();
+			Assert.Fail ("MetadataToken");
 		} catch (ArgumentException) {
 		}
 
 		try {
-			module.ResolveMethod (t.GetMethod ("ResolveMethod").MetadataToken + 10000);
-			Assert.Fail ();
+			module.ResolveMethod (t.GetMethod ("ResolveMethod").MetadataToken + 100000);
+			Assert.Fail ("GetMethod");
 		} catch (ArgumentOutOfRangeException) {
 		}
 	}
@@ -328,8 +341,9 @@ public class ModuleTest
 		Module m = typeof (ModuleTest).Module;
 		m.GetObjectData (null, new StreamingContext (StreamingContextStates.All));
 	}
-#if !MONOTOUCH
+#if !MONOTOUCH && !MOBILE_STATIC
 	[Test]
+	[Category ("AndroidNotWorking")] // Mono.CompilerServices.SymbolWriter not available for Xamarin.Android
 	public void GetTypes ()
 	{
 		AssemblyName newName = new AssemblyName ();

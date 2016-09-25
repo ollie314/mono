@@ -54,7 +54,7 @@ using System.Runtime.InteropServices;
 [assembly: NeutralResourcesLanguage ("en-US")]
 [assembly: CLSCompliant (true)]
 [assembly: AssemblyDelaySign (true)]
-#if NET_2_1
+#if MOBILE
 [assembly: AssemblyKeyFile ("../silverlight.pub")]
 #else
 [assembly: AssemblyKeyFile ("../ecma.pub")]
@@ -64,3 +64,7 @@ using System.Runtime.InteropServices;
 #endif
 
 [assembly: ComVisible (false)]
+
+#if !MOBILE
+[assembly: TypeForwardedTo (typeof (System.Windows.Markup.ValueSerializerAttribute))]
+#endif

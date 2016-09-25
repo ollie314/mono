@@ -23,8 +23,8 @@ public class TimeZoneTest {
 
 	private void CET (TimeZone t1) 
 	{
-		Assert.AreEqual("CET", t1.StandardName, "A01");
-		Assert.AreEqual("CEST", t1.DaylightName, "A02");
+		Assert.IsTrue("CET" == t1.StandardName || "W. Europe Standard Time" == t1.StandardName, "A01");
+		Assert.IsTrue("CEST" == t1.DaylightName || "W. Europe Daylight Time" == t1.DaylightName, "A02");
 	
 		DaylightTime d1 = t1.GetDaylightChanges (2002);
 		Assert.AreEqual("03/31/2002 02:00:00", d1.Start.ToString ("G", CultureInfo.InvariantCulture), "A03");
@@ -55,9 +55,8 @@ public class TimeZoneTest {
 
 	private void EST (TimeZone t1) 
 	{
-		// It could be EST though...
-		//Assert.AreEqual("Eastern Standard Time", t1.StandardName, "B01");
-		//Assert.AreEqual("Eastern Daylight Time", t1.DaylightName, "B02");
+		Assert.IsTrue("EST" == t1.StandardName || "Eastern Standard Time" == t1.StandardName, "B01");
+		Assert.IsTrue("EDT" == t1.DaylightName || "Eastern Daylight Time" == t1.DaylightName, "B02");
 
 		DaylightTime d1 = t1.GetDaylightChanges (2002);
 		Assert.AreEqual("04/07/2002 02:00:00", d1.Start.ToString ("G", CultureInfo.InvariantCulture), "B03");
@@ -174,6 +173,7 @@ public class TimeZoneTest {
 	{
 		TimeZone t1 = TimeZone.CurrentTimeZone;
 		switch (t1.StandardName) {
+			case "W. Europe Standard Time":
 			case "CET":
 				CET (t1);
 				break;
@@ -320,10 +320,20 @@ public class TimeZoneTest {
 		[Test]
 		public void FindSystemTimeZoneById ()
 		{
-			TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById ("Canada/Eastern");
-			Assert.AreEqual ("EDT", tzi.DaylightName, "DaylightName");
-			Assert.AreEqual ("EST", tzi.StandardName, "StandardName");
+			TimeZoneInfo tzi = TimeZoneInfo.FindSystemTimeZoneById (TimeZoneInfoTest.MapTimeZoneId ("Canada/Eastern"));
+			Assert.IsTrue ("EDT" == tzi.DaylightName || "Eastern Daylight Time" == tzi.DaylightName, "DaylightName");
+			Assert.IsTrue ("EST" == tzi.StandardName || "Eastern Standard Time" == tzi.StandardName, "StandardName");
 			Assert.IsTrue (tzi.SupportsDaylightSavingTime, "SupportsDaylightSavingTime");
+		}
+
+		[Test]
+		public void OldEraToLocalTime ()
+		{
+			TimeSpan offset = TimeSpan.Zero;
+			var dto = new DateTimeOffset (new DateTime (1900, 1, 1).Ticks, offset);
+
+			// Should never throw
+			dto.ToLocalTime ();
 		}
 
 #if MOBILE
@@ -349,12 +359,15 @@ public class TimeZoneTest {
 				// now it fails on Snow Leopard the same way (incomplete data) with iOS5 simulator (OS update ?)
 				// but it *never*ever* failed on devices
 				incomplete_data_on_simulator_only_bug = true;
+#if XAMCORE_2_0 || MONOTOUCH
+
 #if XAMCORE_2_0
 				if (ObjCRuntime.Runtime.Arch == ObjCRuntime.Arch.SIMULATOR)
-#else
+#elif MONOTOUCH
 				if (MonoTouch.ObjCRuntime.Runtime.Arch == MonoTouch.ObjCRuntime.Arch.SIMULATOR)
 #endif
 					Assert.Ignore ("known to fail on some iOS simulator versions - see source comments");
+#endif // XAMCORE_2_0 || MONOTOUCH
 			}
 		}
 #endif

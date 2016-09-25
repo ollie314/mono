@@ -70,13 +70,20 @@ namespace System.Net.Http.Headers
 					return null;
 
 				var c = (HttpHeaderValueCollection<U>) collection;
-				if (c.Count == 0)
-					return null;
+				if (c.Count == 0) {
+					if (c.InvalidValues == null)
+						return null;
+
+					return new List<string> (c.InvalidValues);
+				}
 
 				var list = new List<string> ();
 				foreach (var item in c) {
 					list.Add (item.ToString ());
 				}
+
+				if (c.InvalidValues != null)
+					list.AddRange (c.InvalidValues);
 
 				return list;
 			}
@@ -134,9 +141,11 @@ namespace System.Net.Http.Headers
 			this.HeaderKind = headerKind;
 		}
 
-		public static HeaderInfo CreateSingle<T> (string name, TryParseDelegate<T> parser, HttpHeaderKind headerKind)
+		public static HeaderInfo CreateSingle<T> (string name, TryParseDelegate<T> parser, HttpHeaderKind headerKind, Func<object, string> toString = null)
 		{
-			return new HeaderTypeInfo<T, object> (name, parser, headerKind);
+			return new HeaderTypeInfo<T, object> (name, parser, headerKind) {
+				CustomToString = toString
+			};
 		}
 
 		//
@@ -150,6 +159,10 @@ namespace System.Net.Http.Headers
 		public object CreateCollection (HttpHeaders headers)
 		{
 			return CreateCollection (headers, this);
+		}
+
+		public Func<object, string> CustomToString {
+			get; private set;
 		}
 
 		public virtual string Separator {

@@ -28,13 +28,14 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-#if NET_4_0
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+#if !MOBILE_STATIC
 using System.Data;
+#endif
 using System.IO;
 using System.Net;
 using System.Runtime.Serialization;
@@ -115,4 +116,3 @@ public class ResolvedClass
 	public Guid Baz = Guid.Parse ("c74376f0-5517-4cb7-8a07-35026423f565");
 }
 
-#endif

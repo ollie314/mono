@@ -4,12 +4,13 @@
  * Copyright 2001-2003 Ximian, Inc (http://www.ximian.com)
  * Copyright 2004-2011 Novell, Inc (http://www.novell.com)
  * Copyright 2011 Xamarin, Inc (http://www.xamarin.com)
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
 #include "config.h"
 #include <glib.h>
 #include <mono/metadata/mono-gc.h>
-#include <mono/metadata/gc-internal.h>
+#include <mono/metadata/gc-internals.h>
 #include <mono/metadata/runtime.h>
 #include <mono/utils/atomic.h>
 #include <mono/utils/mono-threads.h>
@@ -117,7 +118,7 @@ mono_gc_enable_alloc_events (void)
 }
 
 int
-mono_gc_register_root (char *start, size_t size, void *descr)
+mono_gc_register_root (char *start, size_t size, void *descr, MonoGCRootSource source, const char *msg)
 {
 	return TRUE;
 }
@@ -176,7 +177,7 @@ mono_gc_make_root_descr_all_refs (int numbits)
 }
 
 void*
-mono_gc_alloc_fixed (size_t size, void *descr)
+mono_gc_alloc_fixed (size_t size, void *descr, MonoGCRootSource source, const char *msg)
 {
 	return g_malloc0 (size);
 }
@@ -190,7 +191,7 @@ mono_gc_free_fixed (void* addr)
 void *
 mono_gc_alloc_obj (MonoVTable *vtable, size_t size)
 {
-	MonoObject *obj = calloc (1, size);
+	MonoObject *obj = g_calloc (1, size);
 
 	obj->vtable = vtable;
 
@@ -200,7 +201,7 @@ mono_gc_alloc_obj (MonoVTable *vtable, size_t size)
 void *
 mono_gc_alloc_vector (MonoVTable *vtable, size_t size, uintptr_t max_length)
 {
-	MonoArray *obj = calloc (1, size);
+	MonoArray *obj = g_calloc (1, size);
 
 	obj->obj.vtable = vtable;
 	obj->max_length = max_length;
@@ -211,7 +212,7 @@ mono_gc_alloc_vector (MonoVTable *vtable, size_t size, uintptr_t max_length)
 void *
 mono_gc_alloc_array (MonoVTable *vtable, size_t size, uintptr_t max_length, uintptr_t bounds_size)
 {
-	MonoArray *obj = calloc (1, size);
+	MonoArray *obj = g_calloc (1, size);
 
 	obj->obj.vtable = vtable;
 	obj->max_length = max_length;
@@ -225,13 +226,25 @@ mono_gc_alloc_array (MonoVTable *vtable, size_t size, uintptr_t max_length, uint
 void *
 mono_gc_alloc_string (MonoVTable *vtable, size_t size, gint32 len)
 {
-	MonoString *obj = calloc (1, size);
+	MonoString *obj = g_calloc (1, size);
 
 	obj->object.vtable = vtable;
 	obj->length = len;
 	obj->chars [len] = 0;
 
 	return obj;
+}
+
+void*
+mono_gc_alloc_mature (MonoVTable *vtable, size_t size)
+{
+	return mono_gc_alloc_obj (vtable, size);
+}
+
+void*
+mono_gc_alloc_pinned_obj (MonoVTable *vtable, size_t size)
+{
+	return mono_gc_alloc_obj (vtable, size);
 }
 
 void
@@ -308,7 +321,7 @@ mono_gc_get_managed_array_allocator (MonoClass *klass)
 }
 
 MonoMethod*
-mono_gc_get_managed_allocator_by_type (int atype, gboolean slowpath)
+mono_gc_get_managed_allocator_by_type (int atype, ManagedAllocatorVariant variant)
 {
 	return NULL;
 }
@@ -348,6 +361,11 @@ mono_gc_remove_weak_track_object (MonoDomain *domain, MonoObject *obj)
 
 void
 mono_gc_clear_domain (MonoDomain *domain)
+{
+}
+
+void
+mono_gc_suspend_finalizers (void)
 {
 }
 
@@ -518,7 +536,7 @@ BOOL APIENTRY mono_gc_dllmain (HMODULE module_handle, DWORD reason, LPVOID reser
 #endif
 
 guint
-mono_gc_get_vtable_bits (MonoClass *class)
+mono_gc_get_vtable_bits (MonoClass *klass)
 {
 	return 0;
 }
@@ -529,15 +547,13 @@ mono_gc_register_altstack (gpointer stack, gint32 stack_size, gpointer altstack,
 }
 
 gboolean
-mono_gc_set_allow_synchronous_major (gboolean flag)
-{
-	return TRUE;
-}
-
-gboolean
 mono_gc_is_null (void)
 {
 	return TRUE;
 }
-
-#endif
+#else
+	#ifdef _MSC_VER
+		// Quiet Visual Studio linker warning, LNK4221, in cases when this source file intentional ends up empty.
+		void __mono_win32_null_gc_quiet_lnk4221(void) {}
+	#endif
+#endif /* HAVE_NULL_GC */

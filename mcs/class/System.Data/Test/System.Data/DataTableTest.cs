@@ -1307,7 +1307,6 @@ namespace MonoTests.System.Data
 			}
 		}
 		
-#if NET_4_0
 		[Test]
 		public void ImportRowTypeChangeTest ()
 		{
@@ -1381,7 +1380,6 @@ namespace MonoTests.System.Data
 				}
 			}
 		}
-#endif
 			
 		[Test]
 		public void ClearReset () //To test Clear and Reset methods
@@ -3238,7 +3236,6 @@ namespace MonoTests.System.Data
 			string TextString = GetNormalizedSchema (writer.ToString ());
 			//string TextString = writer.ToString ();
 
-			EOL = "\n";
 			string substring = TextString.Substring (0, TextString.IndexOf (EOL));
 			TextString = TextString.Substring (TextString.IndexOf (EOL) + EOL.Length);
 			Assert.AreEqual ("<?xml version=\"1.0\" encoding=\"utf-16\"?>", substring, "test#01");
@@ -4199,7 +4196,7 @@ namespace MonoTests.System.Data
 			Assert.AreEqual (5, n, "n");
 		}
 
-#if !MONOTOUCH
+#if !MONOTOUCH && !MOBILE_STATIC
 		[Test]
 		public void NFIFromBug55978 ()
 		{

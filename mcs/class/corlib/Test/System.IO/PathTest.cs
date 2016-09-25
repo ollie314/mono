@@ -37,6 +37,7 @@ namespace MonoTests.System.IO
 		static string path3;
 		static OsType OS;
 		static char DSC = Path.DirectorySeparatorChar;
+		static char ADSC = Path.AltDirectorySeparatorChar;
 
 		[SetUp]
 		public void SetUp ()
@@ -173,9 +174,10 @@ namespace MonoTests.System.IO
 			Assert.AreEqual ("one", testPath, "Combine #03");
 
 			string current = Directory.GetCurrentDirectory ();
+			bool currentIsDSC = current.Length == 1 && current [0] == DSC;
 			testPath = Path.Combine (current, "one");
 
-			string expected = current + DSC + "one";
+			string expected = (currentIsDSC ? String.Empty : current) + DSC + "one";
 			Assert.AreEqual (expected, testPath, "Combine #04");
 
 			testPath = Path.Combine ("one", current);
@@ -200,9 +202,7 @@ namespace MonoTests.System.IO
 			expected = "one" + DSC + "two" + DSC;
 			Assert.AreEqual (expected, testPath, "Combine #07");
 
-#if NET_4_0
 			Assert.AreEqual ("a", Path.Combine (new [] { "a", "" }), "Combine #08");
-#endif
 		}
 
 		[Test]
@@ -361,6 +361,12 @@ namespace MonoTests.System.IO
 		}
 
 		[Test]
+		public void GetDirectoryName_Replaces_AltDirectorySeparatorChar ()
+		{
+			Assert.AreEqual ($"foo{DSC}bar", Path.GetDirectoryName ($"foo{ADSC}bar{ADSC}dingus"), "#1");
+		}
+
+		[Test]
 		public void GetExtension ()
 		{
 			string testExtn = Path.GetExtension (path1);
@@ -484,9 +490,9 @@ namespace MonoTests.System.IO
 		public void GetFullPath ()
 		{
 			string current = Directory.GetCurrentDirectory ();
-
+			bool currentIsDSC = current.Length == 1 && current [0] == DSC;
 			string testFullPath = Path.GetFullPath ("foo.txt");
-			string expected = current + DSC + "foo.txt";
+			string expected = (currentIsDSC ? String.Empty : current) + DSC + "foo.txt";
 			Assert.AreEqual (expected, testFullPath, "GetFullPath #01");
 
 			testFullPath = Path.GetFullPath ("a//./.././foo.txt");
@@ -689,6 +695,11 @@ namespace MonoTests.System.IO
 						i, root + test [i, 0], ex.GetType ()));
 				}
 			}
+
+			// These cases require that we don't pass a root to GetFullPath - it should return the proper drive root.
+			string root4 = Path.GetPathRoot(Directory.GetCurrentDirectory());
+			Assert.AreEqual(root4, Path.GetFullPath(@"\"));
+			Assert.AreEqual(root4, Path.GetFullPath("/"));
 		}
 
 		[Test]
@@ -1241,7 +1252,6 @@ namespace MonoTests.System.IO
 			}
 		}
 
-#if NET_4_0
 		string Concat (string sep, params string [] parms)
 		{
 			return String.Join (sep, parms);
@@ -1381,7 +1391,6 @@ namespace MonoTests.System.IO
 
 			Assert.AreEqual ("", Path.Combine ("", "", "", "", ""), "#A4");
 		}
-#endif
 	}
 }
 

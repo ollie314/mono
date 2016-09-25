@@ -55,6 +55,7 @@ namespace System.Runtime.Remoting.Contexts {
 		int domain_id;
 		int context_id;
 		UIntPtr static_data; /* GC-tracked */
+		UIntPtr data;
 		#endregion
 #pragma warning restore 169, 414
 
@@ -86,6 +87,9 @@ namespace System.Runtime.Remoting.Contexts {
 
 		[MethodImpl (MethodImplOptions.InternalCall)]
 		extern static void RegisterContext (Context ctx);
+
+		[MethodImpl (MethodImplOptions.InternalCall)]
+		extern static void ReleaseContext (Context ctx);
 		
 		public Context ()
 		{
@@ -97,6 +101,7 @@ namespace System.Runtime.Remoting.Contexts {
 
 		~Context ()
 		{
+			ReleaseContext (this);
 		}
 
 		public static Context DefaultContext {

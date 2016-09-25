@@ -28,7 +28,6 @@
 using System.Security.Cryptography;
 
 
-#if NET_4_0
 using System;
 using System.Text;
 using System.Web.Security;
@@ -170,7 +169,6 @@ namespace MonoTests.System.Web.Security
 			}
 		}
 
-#if NET_4_5
 		[Test]
 		public void Protect ()
 		{
@@ -201,7 +199,5 @@ namespace MonoTests.System.Web.Security
 				MachineKey.Unprotect (encryptedBytes, oneUsage), 
 				"Single purpose working when multiple supplied");
 		}
-#endif
 	}
 }
-#endif

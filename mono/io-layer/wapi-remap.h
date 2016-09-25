@@ -16,11 +16,6 @@
 #define SetLastError wapi_SetLastError
 #define TransmitFile wapi_TransmitFile
 #define GetThreadContext wapi_GetThreadContext
-#define CreateEvent wapi_CreateEvent 
-#define PulseEvent wapi_PulseEvent 
-#define ResetEvent wapi_ResetEvent 
-#define SetEvent wapi_SetEvent 
-#define OpenEvent wapi_OpenEvent 
 #define CloseHandle wapi_CloseHandle 
 #define DuplicateHandle wapi_DuplicateHandle 
 #define CreateFile wapi_CreateFile
@@ -50,7 +45,6 @@
 #define GetCurrentDirectory wapi_GetCurrentDirectory 
 #define SetCurrentDirectory wapi_SetCurrentDirectory 
 #define CreatePipe wapi_CreatePipe 
-#define GetTempPath wapi_GetTempPath 
 #define GetLogicalDriveStrings wapi_GetLogicalDriveStrings 
 #define GetDiskFreeSpaceEx wapi_GetDiskFreeSpaceEx
 #define GetDriveType wapi_GetDriveType
@@ -58,9 +52,6 @@
 #define UnlockFile wapi_UnlockFile 
 #define GetVolumeInformation wapi_GetVolumeInformation 
 #define FormatMessage wapi_FormatMessage 
-#define CreateMutex wapi_CreateMutex 
-#define ReleaseMutex wapi_ReleaseMutex 
-#define OpenMutex wapi_OpenMutex 
 #define ShellExecuteEx wapi_ShellExecuteEx 
 #define CreateProcess wapi_CreateProcess 
 #define CreateProcessWithLogonW wapi_CreateProcessWithLogonW 
@@ -81,30 +72,18 @@
 #define SetPriorityClass wapi_SetPriorityClass 
 #define ImpersonateLoggedOnUser wapi_ImpersonateLoggedOnUser 
 #define RevertToSelf wapi_RevertToSelf 
-#define CreateSemaphore wapi_CreateSemaphore
-#define ReleaseSemaphore wapi_ReleaseSemaphore
-#define OpenSemaphore wapi_OpenSemaphore 
 #define WSASetLastError wapi_WSASetLastError
 #define WSAGetLastError wapi_WSAGetLastError
 #define WSAIoctl wapi_WSAIoctl 
 #define WSARecv wapi_WSARecv 
 #define WSASend wapi_WSASend 
 #define GetSystemInfo wapi_GetSystemInfo
-#define GetCurrentThreadId wapi_GetCurrentThreadId
-#define Sleep wapi_Sleep
-#define SleepEx wapi_SleepEx
-#define QueryPerformanceCounter wapi_QueryPerformanceCounter
-#define QueryPerformanceFrequency wapi_QueryPerformanceFrequency
-#define GetTickCount wapi_GetTickCount 
 #define GetFileVersionInfoSize wapi_GetFileVersionInfoSize 
 #define GetFileVersionInfo wapi_GetFileVersionInfo 
 #define VerQueryValue wapi_VerQueryValue 
 #define VerLanguageName wapi_VerLanguageName 
-#define WaitForSingleObject wapi_WaitForSingleObject
 #define WaitForSingleObjectEx wapi_WaitForSingleObjectEx
 #define SignalObjectAndWait wapi_SignalObjectAndWait
-#define WaitForMultipleObjects wapi_WaitForMultipleObjects
 #define WaitForMultipleObjectsEx wapi_WaitForMultipleObjectsEx
-#define WaitForInputIdle wapi_WaitForInputIdle
 
 #endif /* __WAPI_REMAP_H__ */

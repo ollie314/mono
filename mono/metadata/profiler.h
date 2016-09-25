@@ -30,7 +30,9 @@ typedef enum {
 	MONO_PROFILE_MONITOR_EVENTS   = 1 << 17,
 	MONO_PROFILE_IOMAP_EVENTS     = 1 << 18, /* this should likely be removed, too */
 	MONO_PROFILE_GC_MOVES         = 1 << 19,
-	MONO_PROFILE_GC_ROOTS         = 1 << 20
+	MONO_PROFILE_GC_ROOTS         = 1 << 20,
+	MONO_PROFILE_CONTEXT_EVENTS   = 1 << 21,
+	MONO_PROFILE_GC_FINALIZATION  = 1 << 22
 } MonoProfileFlags;
 
 typedef enum {
@@ -38,6 +40,7 @@ typedef enum {
 	MONO_PROFILE_FAILED
 } MonoProfileResult;
 
+// Keep somewhat in sync with libgc/include/gc.h:enum GC_EventType
 typedef enum {
 	MONO_GC_EVENT_START,
 	MONO_GC_EVENT_MARK_START,
@@ -45,10 +48,26 @@ typedef enum {
 	MONO_GC_EVENT_RECLAIM_START,
 	MONO_GC_EVENT_RECLAIM_END,
 	MONO_GC_EVENT_END,
+	/*
+	 * This is the actual arrival order of the following events:
+	 *
+	 * MONO_GC_EVENT_PRE_STOP_WORLD
+	 * MONO_GC_EVENT_PRE_STOP_WORLD_LOCKED
+	 * MONO_GC_EVENT_POST_STOP_WORLD
+	 * MONO_GC_EVENT_PRE_START_WORLD
+	 * MONO_GC_EVENT_POST_START_WORLD_UNLOCKED
+	 * MONO_GC_EVENT_POST_START_WORLD
+	 *
+	 * The LOCKED and UNLOCKED events guarantee that, by the time they arrive,
+	 * the GC and suspend locks will both have been acquired and released,
+	 * respectively.
+	 */
 	MONO_GC_EVENT_PRE_STOP_WORLD,
 	MONO_GC_EVENT_POST_STOP_WORLD,
 	MONO_GC_EVENT_PRE_START_WORLD,
-	MONO_GC_EVENT_POST_START_WORLD
+	MONO_GC_EVENT_POST_START_WORLD,
+	MONO_GC_EVENT_PRE_STOP_WORLD_LOCKED,
+	MONO_GC_EVENT_POST_START_WORLD_UNLOCKED
 } MonoGCEvent;
 
 /* coverage info */
@@ -118,6 +137,7 @@ typedef enum {
 typedef void (*MonoProfileFunc) (MonoProfiler *prof);
 
 typedef void (*MonoProfileAppDomainFunc) (MonoProfiler *prof, MonoDomain   *domain);
+typedef void (*MonoProfileContextFunc)   (MonoProfiler *prof, MonoAppContext *context);
 typedef void (*MonoProfileMethodFunc)   (MonoProfiler *prof, MonoMethod   *method);
 typedef void (*MonoProfileClassFunc)    (MonoProfiler *prof, MonoClass    *klass);
 typedef void (*MonoProfileModuleFunc)   (MonoProfiler *prof, MonoImage    *module);
@@ -128,6 +148,7 @@ typedef void (*MonoProfileExceptionFunc) (MonoProfiler *prof, MonoObject *object
 typedef void (*MonoProfileExceptionClauseFunc) (MonoProfiler *prof, MonoMethod *method, int clause_type, int clause_num);
 
 typedef void (*MonoProfileAppDomainResult)(MonoProfiler *prof, MonoDomain   *domain,   int result);
+typedef void (*MonoProfileAppDomainFriendlyNameFunc) (MonoProfiler *prof, MonoDomain *domain, const char *name);
 typedef void (*MonoProfileMethodResult)   (MonoProfiler *prof, MonoMethod   *method,   int result);
 typedef void (*MonoProfileJitResult)      (MonoProfiler *prof, MonoMethod   *method,   MonoJitInfo* jinfo,   int result);
 typedef void (*MonoProfileClassResult)    (MonoProfiler *prof, MonoClass    *klass,    int result);
@@ -146,6 +167,9 @@ typedef void (*MonoProfileGCMoveFunc)     (MonoProfiler *prof, void **objects, i
 typedef void (*MonoProfileGCResizeFunc)   (MonoProfiler *prof, int64_t new_size);
 typedef void (*MonoProfileGCHandleFunc)   (MonoProfiler *prof, int op, int type, uintptr_t handle, MonoObject *obj);
 typedef void (*MonoProfileGCRootFunc)     (MonoProfiler *prof, int num_roots, void **objects, int *root_types, uintptr_t *extra_info);
+
+typedef void (*MonoProfileGCFinalizeFunc)  (MonoProfiler *prof);
+typedef void (*MonoProfileGCFinalizeObjectFunc) (MonoProfiler *prof, MonoObject *obj);
 
 typedef void (*MonoProfileIomapFunc) (MonoProfiler *prof, const char *report, const char *pathname, const char *new_pathname);
 
@@ -167,6 +191,8 @@ MONO_API MonoProfileFlags mono_profiler_get_events (void);
 
 MONO_API void mono_profiler_install_appdomain   (MonoProfileAppDomainFunc start_load, MonoProfileAppDomainResult end_load,
                                         MonoProfileAppDomainFunc start_unload, MonoProfileAppDomainFunc end_unload);
+MONO_API void mono_profiler_install_appdomain_name (MonoProfileAppDomainFriendlyNameFunc domain_name_cb);
+MONO_API void mono_profiler_install_context     (MonoProfileContextFunc load, MonoProfileContextFunc unload);
 MONO_API void mono_profiler_install_assembly    (MonoProfileAssemblyFunc start_load, MonoProfileAssemblyResult end_load,
                                         MonoProfileAssemblyFunc start_unload, MonoProfileAssemblyFunc end_unload);
 MONO_API void mono_profiler_install_module      (MonoProfileModuleFunc start_load, MonoProfileModuleResult end_load,
@@ -192,6 +218,7 @@ MONO_API void mono_profiler_coverage_get  (MonoProfiler *prof, MonoMethod *metho
 MONO_API void mono_profiler_install_gc    (MonoProfileGCFunc callback, MonoProfileGCResizeFunc heap_resize_callback);
 MONO_API void mono_profiler_install_gc_moves    (MonoProfileGCMoveFunc callback);
 MONO_API void mono_profiler_install_gc_roots    (MonoProfileGCHandleFunc handle_callback, MonoProfileGCRootFunc roots_callback);
+MONO_API void mono_profiler_install_gc_finalize (MonoProfileGCFinalizeFunc begin, MonoProfileGCFinalizeObjectFunc begin_obj, MonoProfileGCFinalizeObjectFunc end_obj, MonoProfileGCFinalizeFunc end);
 MONO_API void mono_profiler_install_runtime_initialized (MonoProfileFunc runtime_initialized_callback);
 
 MONO_API void mono_profiler_install_code_chunk_new (MonoProfilerCodeChunkNew callback);
@@ -209,7 +236,7 @@ typedef enum {
 	MONO_PROFILER_STAT_MODE_REAL = 1,
 } MonoProfileSamplingMode;
 
-MONO_API void mono_profiler_set_statistical_mode (MonoProfileSamplingMode mode, int64_t sampling_frequency_is_us);
+MONO_API void mono_profiler_set_statistical_mode (MonoProfileSamplingMode mode, int64_t sampling_frequency_hz);
 
 MONO_END_DECLS
 

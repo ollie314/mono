@@ -168,6 +168,8 @@ namespace MonoTests.System.IO
 					info = new DirectoryInfo ("/test/");
 					Assert.AreEqual ("test", info.Name, "#4");
 				} else {
+					Directory.SetCurrentDirectory (@"C:\");
+
 					info = new DirectoryInfo (@"c:");
 					Assert.AreEqual (@"C:\", info.Name, "#4");
 
@@ -217,6 +219,8 @@ namespace MonoTests.System.IO
 					Assert.IsNotNull (info.Parent, "#7a");
 					Assert.AreEqual ("/", info.Parent.FullName, "#7b");
 				} else {
+					Directory.SetCurrentDirectory (@"C:\");
+
 					info = new DirectoryInfo (@"c:");
 					Assert.IsNull (info.Parent, "#4");
 
@@ -418,6 +422,8 @@ namespace MonoTests.System.IO
 				di = new DirectoryInfo ("/test/");
 				Assert.AreEqual ("/test/", di.FullName, "#D4");
 			} else {
+				Directory.SetCurrentDirectory (@"C:\");
+
 				di = new DirectoryInfo (@"c:");
 				Assert.AreEqual (@"C:\", di.FullName, "#D1");
 
@@ -1054,7 +1060,6 @@ namespace MonoTests.System.IO
 			Assert.AreEqual (TempFolder + DSC + "ToString.Test", info.ToString ());
 		}
 
-#if NET_4_0
 		[Test]
 		public void EnumerateFileSystemInfosTest ()
 		{
@@ -1069,7 +1074,6 @@ namespace MonoTests.System.IO
 			l.Sort ();
 			Assert.AreEqual ("1,2,a,b", string.Join (",", l), "#1");
 		}
-#endif
 
 #if !MOBILE
 		[Test]

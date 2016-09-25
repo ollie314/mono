@@ -46,9 +46,11 @@ namespace System.IO.Pipes
 		// FIXME: not precise.
 		internal const int DefaultBufferSize = 0x400;
 
+#if !MOBILE
 		internal static bool IsWindows {
 			get { return Win32Marshal.IsWindows; }
 		}
+#endif
 
 		internal Exception ThrowACLException ()
 		{
@@ -236,18 +238,26 @@ namespace System.IO.Pipes
 
 		public PipeSecurity GetAccessControl ()
 		{
+#if MOBILE
+			throw new PlatformNotSupportedException ();
+#else
 			return new PipeSecurity (SafePipeHandle,
 						 AccessControlSections.Owner |
 						 AccessControlSections.Group |
 						 AccessControlSections.Access);
+#endif
 		}
 
 		public void SetAccessControl (PipeSecurity pipeSecurity)
 		{
+#if MOBILE
+			throw new PlatformNotSupportedException ();
+#else
 			if (pipeSecurity == null)
 				throw new ArgumentNullException ("pipeSecurity");
 				
 			pipeSecurity.Persist (SafePipeHandle);
+#endif
 		}
 
 		// pipe I/O

@@ -32,6 +32,7 @@
 
 #if !FULL_AOT_RUNTIME
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
 using System.Globalization;
@@ -200,7 +201,7 @@ namespace System.Reflection.Emit {
 
 		public void AddDeclarativeSecurity (SecurityAction action, PermissionSet pset)
 		{
-#if !NET_2_1
+#if !MOBILE
 			if (pset == null)
 				throw new ArgumentNullException ("pset");
 			if ((action == SecurityAction.RequestMinimum) ||
@@ -269,6 +270,14 @@ namespace System.Reflection.Emit {
 			ilgen = new ILGenerator (type.Module, ((ModuleBuilder)type.Module).GetTokenGenerator (), streamSize);
 			return ilgen;
 		}
+
+		public void SetMethodBody (byte[] il, int maxStack, byte[] localSignature,
+			IEnumerable<ExceptionHandler> exceptionHandlers, IEnumerable<int> tokenFixups)
+		{
+			var ilgen = GetILGenerator ();
+			ilgen.Init (il, maxStack, localSignature, exceptionHandlers, tokenFixups);
+		}
+
 
 		public void SetCustomAttribute (CustomAttributeBuilder customBuilder)
 		{
@@ -350,6 +359,18 @@ namespace System.Reflection.Emit {
 			}
 			if (ilgen != null)
 				ilgen.label_fixup (this);
+		}
+
+		internal void ResolveUserTypes () {
+			TypeBuilder.ResolveUserTypes (parameters);
+			if (paramModReq != null) {
+				foreach (var types in paramModReq)
+					TypeBuilder.ResolveUserTypes (types);
+			}
+			if (paramModOpt != null) {
+				foreach (var types in paramModOpt)
+					TypeBuilder.ResolveUserTypes (types);
+			}
 		}
 		
 		internal void GenerateDebugInfo (ISymbolWriter symbolWriter)

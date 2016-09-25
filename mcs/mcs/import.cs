@@ -13,6 +13,7 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Linq;
 using System.Collections.Generic;
+using System.IO;
 
 #if STATIC
 using MetaType = IKVM.Reflection.Type;
@@ -141,6 +142,7 @@ namespace Mono.CSharp
 			compiled_types = new Dictionary<MetaType, TypeSpec> (40, ReferenceEquality<MetaType>.Default);
 			assembly_2_definition = new Dictionary<Assembly, IAssemblyDefinition> (ReferenceEquality<Assembly>.Default);
 			IgnorePrivateMembers = true;
+			IgnoreCompilerGeneratedField = true;
 		}
 
 		#region Properties
@@ -152,6 +154,8 @@ namespace Mono.CSharp
 		}
 
 		public bool IgnorePrivateMembers { get; set; }
+
+		public bool IgnoreCompilerGeneratedField { get; set; }
 
 		#endregion
 
@@ -178,8 +182,10 @@ namespace Mono.CSharp
 					break;
 				default:
 					// Ignore private fields (even for error reporting) to not require extra dependencies
-					if ((IgnorePrivateMembers && !declaringType.IsStruct) ||
-						HasAttribute (CustomAttributeData.GetCustomAttributes (fi), "CompilerGeneratedAttribute", CompilerServicesNamespace))
+					if (IgnorePrivateMembers && !declaringType.IsStruct)
+						return null;
+
+					if (IgnoreCompilerGeneratedField && HasAttribute (CustomAttributeData.GetCustomAttributes (fi), "CompilerGeneratedAttribute", CompilerServicesNamespace))
 						return null;
 
 					mod = Modifiers.PRIVATE;
@@ -675,19 +681,15 @@ namespace Mono.CSharp
 			if (!param.IsEmpty) {
 				if (is_valid_property) {
 					var index_name = declaringType.MemberDefinition.GetAttributeDefaultMember ();
-					if (index_name == null) {
+					if (index_name == null || index_name != pi.Name) {
 						is_valid_property = false;
 					} else {
 						if (get != null) {
 							if (get.IsStatic)
 								is_valid_property = false;
-							if (get.Name.IndexOf (index_name, StringComparison.Ordinal) != 4)
-								is_valid_property = false;
 						}
 						if (set != null) {
 							if (set.IsStatic)
-								is_valid_property = false;
-							if (set.Name.IndexOf (index_name, StringComparison.Ordinal) != 4)
 								is_valid_property = false;
 						}
 					}
@@ -817,7 +819,7 @@ namespace Mono.CSharp
 						if (t.Kind == MemberKind.MissingType)
 							spec = t;
 						else
-							spec = MemberCache.FindNestedType (spec, t.Name, t.Arity);
+							spec = MemberCache.FindNestedType (spec, t.Name, t.Arity, false);
 
 						if (t.Arity > 0) {
 							spec = spec.MakeGenericType (module, targs.Skip (targs_pos).Take (spec.Arity).ToArray ());
@@ -837,7 +839,7 @@ namespace Mono.CSharp
 						if (index > 0)
 							name = name.Substring (0, index);
 
-						spec = MemberCache.FindNestedType (spec, name, targs.Length - targs_pos);
+						spec = MemberCache.FindNestedType (spec, name, targs.Length - targs_pos, false);
 
 						if (spec.Arity > 0) {
 							spec = spec.MakeGenericType (module, targs.Skip (targs_pos).ToArray ());
@@ -978,6 +980,21 @@ namespace Mono.CSharp
 
 			return found;
 		}
+
+		public ImportedAssemblyDefinition GetImportedAssemblyDefinition (AssemblyName assemblyName)
+		{
+			foreach (var a in Assemblies) {
+				var ia = a as ImportedAssemblyDefinition;
+				if (ia == null)
+					continue;
+				
+				if (a.Name == assemblyName.Name)
+					return ia;
+			}
+
+			return null;
+		}
+
 
 		public void ImportTypeBase (MetaType type)
 		{
@@ -1724,7 +1741,14 @@ namespace Mono.CSharp
 					if (s == null)
 						continue;
 
-					var an = new AssemblyName (s);
+					AssemblyName an;
+					try {
+						an = new AssemblyName (s);
+					} catch (FileLoadException) {
+						// Invalid assembly name reuses FileLoadException
+						continue;
+					}
+
 					if (internals_visible_to == null)
 						internals_visible_to = new List<AssemblyName> ();
 

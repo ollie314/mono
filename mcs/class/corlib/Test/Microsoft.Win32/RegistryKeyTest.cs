@@ -657,7 +657,6 @@ namespace MonoTests.Microsoft.Win32
 			}
 		}
 
-#if NET_4_0
 		// Unfortunately we can't test that the scenario where a volatile
 		// key is not alive after a reboot, but we can test other bits.
 		[Test]
@@ -680,6 +679,7 @@ namespace MonoTests.Microsoft.Win32
 					subkey.Close ();
 				if (key != null)
 					key.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyName, false);
 			}
 		}
 
@@ -700,6 +700,7 @@ namespace MonoTests.Microsoft.Win32
 					subkey.Close ();
 				if (key != null)
 					key.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyName, false);
 			}
 		}
 
@@ -709,14 +710,15 @@ namespace MonoTests.Microsoft.Win32
 			RegistryKey key = null;
 			RegistryKey key2 = null;
 			RegistryKey subkey = null;
-			string subKeyName = "VolatileKey";
+			string subKeyNameVolatile = "VolatileKey";
+			string subKeyNameNonVolatile = "NonVolatileKey";
 
 			try {
 				// 
 				// Create a volatile key and try to open it as a normal one
 				//
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
-				key2 = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key2 = Registry.CurrentUser.CreateSubKey (subKeyNameVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
 				Assert.AreEqual (key.Name, key2.Name, "A0");
 
 				subkey = key2.CreateSubKey ("Child", RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
@@ -730,10 +732,9 @@ namespace MonoTests.Microsoft.Win32
 				// 
 				// Create a non-volatile key and try to open it as a volatile one
 				//
-				subKeyName = "NonVolatileKey";
-				key2 = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
+				key2 = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.None);
 				key2.SetValue ("Name", "Mono");
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
 				Assert.AreEqual (key.Name, key2.Name, "B0");
 				Assert.AreEqual ("Mono", key.GetValue ("Name"), "#B1");
 				Assert.AreEqual ("Mono", key2.GetValue ("Name"), "#B2");
@@ -747,7 +748,7 @@ namespace MonoTests.Microsoft.Win32
 				//
 				key.Close ();
 				key2.Close ();
-				key = Registry.CurrentUser.CreateSubKey (subKeyName, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
+				key = Registry.CurrentUser.CreateSubKey (subKeyNameNonVolatile, RegistryKeyPermissionCheck.Default, RegistryOptions.Volatile);
 				Assert.AreEqual ("Mono", key.GetValue ("Name"), "#C0");
 				Assert.AreEqual (true, key.OpenSubKey ("Child") != null, "#C1");
 			} finally {
@@ -757,6 +758,8 @@ namespace MonoTests.Microsoft.Win32
 					key.Close ();
 				if (key2 != null)
 					key2.Close ();
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyNameVolatile, false);
+				Registry.CurrentUser.DeleteSubKeyTree (subKeyNameNonVolatile, false);
 			}
 		}
 
@@ -818,7 +821,6 @@ namespace MonoTests.Microsoft.Win32
 			}
 
 		}
-#endif
 
 		[Test]
 		public void DeleteSubKey ()
@@ -1109,7 +1111,6 @@ namespace MonoTests.Microsoft.Win32
 			}
 		}
 
-#if NET_4_0
 		[Test]
 		public void DeleteSubKeyTree_Key_DoesNotExist_Overload ()
 		{
@@ -1128,7 +1129,6 @@ namespace MonoTests.Microsoft.Win32
 			// It's enough to know this line is not throwing an exception.
 			Registry.CurrentUser.DeleteSubKey (subKeyName, false);
 		}
-#endif
 
 		[Test]
 		public void DeleteSubKeyTree_Key_ReadOnly ()
@@ -1658,7 +1658,6 @@ namespace MonoTests.Microsoft.Win32
 			}
 		}
 
-#if NET_4_0
 		[DllImport ("advapi32.dll", CharSet = CharSet.Unicode)]
 		static extern int RegOpenKeyEx (IntPtr keyBase, string keyName, IntPtr reserved, int access, out IntPtr keyHandle);
         
@@ -1752,7 +1751,6 @@ namespace MonoTests.Microsoft.Win32
 				}
 			}
 		}
-#endif
 
 		[Test]
 		public void GetValue ()

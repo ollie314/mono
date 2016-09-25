@@ -39,6 +39,7 @@ namespace Mono.Linker.Steps {
 		protected override void Process ()
 		{
 			CheckOutputDirectory ();
+			Annotations.SaveDependencies ();
 		}
 
 		void CheckOutputDirectory ()
@@ -63,9 +64,11 @@ namespace Mono.Linker.Steps {
 			switch (Annotations.GetAction (assembly)) {
 			case AssemblyAction.Save:
 			case AssemblyAction.Link:
+				Context.Annotations.AddDependency (assembly);
 				assembly.Write (GetAssemblyFileName (assembly, directory), SaveSymbols (assembly));
 				break;
 			case AssemblyAction.Copy:
+				Context.Annotations.AddDependency (assembly);
 				CloseSymbols (assembly);
 				CopyAssembly (GetOriginalAssemblyFileInfo (assembly), directory, Context.LinkSymbols);
 				break;
@@ -126,7 +129,7 @@ namespace Mono.Linker.Steps {
 
 		static FileInfo GetOriginalAssemblyFileInfo (AssemblyDefinition assembly)
 		{
-			return new FileInfo (assembly.MainModule.FullyQualifiedName);
+			return new FileInfo (assembly.MainModule.FileName);
 		}
 
 		static void CopyAssembly (FileInfo fi, string directory, bool symbols)

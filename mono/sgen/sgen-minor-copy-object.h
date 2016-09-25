@@ -5,26 +5,38 @@
  * Copyright 2003-2010 Novell, Inc.
  * Copyright (C) 2012 Xamarin Inc
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Library General Public
- * License 2.0 as published by the Free Software Foundation;
- *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Library General Public License for more details.
- *
- * You should have received a copy of the GNU Library General Public
- * License 2.0 along with this library; if not, write to the Free
- * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Licensed under the MIT license. See LICENSE file in the project root for full license information.
  */
 
-#define collector_pin_object(obj, queue) sgen_pin_object (obj, queue);
-#define COLLECTOR_SERIAL_ALLOC_FOR_PROMOTION alloc_for_promotion
+#undef SERIAL_COPY_OBJECT
+#undef SERIAL_COPY_OBJECT_FROM_OBJ
+
+#if defined(SGEN_SIMPLE_NURSERY)
+
+#ifdef SGEN_CONCURRENT_MAJOR
+#define SERIAL_COPY_OBJECT simple_nursery_serial_with_concurrent_major_copy_object
+#define SERIAL_COPY_OBJECT_FROM_OBJ simple_nursery_serial_with_concurrent_major_copy_object_from_obj
+#else
+#define SERIAL_COPY_OBJECT simple_nursery_serial_copy_object
+#define SERIAL_COPY_OBJECT_FROM_OBJ simple_nursery_serial_copy_object_from_obj
+#endif
+
+#elif defined (SGEN_SPLIT_NURSERY)
+
+#ifdef SGEN_CONCURRENT_MAJOR
+#define SERIAL_COPY_OBJECT split_nursery_serial_with_concurrent_major_copy_object
+#define SERIAL_COPY_OBJECT_FROM_OBJ split_nursery_serial_with_concurrent_major_copy_object_from_obj
+#else
+#define SERIAL_COPY_OBJECT split_nursery_serial_copy_object
+#define SERIAL_COPY_OBJECT_FROM_OBJ split_nursery_serial_copy_object_from_obj
+#endif
+
+#else
+#error "No nursery configuration specified"
+#endif
+
 
 extern guint64 stat_nursery_copy_object_failed_to_space; /* from sgen-gc.c */
-
-#include "sgen-copy-object.h"
 
 /*
  * This is how the copying happens from the nursery to the old generation.
@@ -47,11 +59,11 @@ extern guint64 stat_nursery_copy_object_failed_to_space; /* from sgen-gc.c */
  */
 
 static MONO_ALWAYS_INLINE void
-SERIAL_COPY_OBJECT (void **obj_slot, SgenGrayQueue *queue) 
+SERIAL_COPY_OBJECT (GCObject **obj_slot, SgenGrayQueue *queue) 
 {
-	char *forwarded;
-	char *copy;
-	char *obj = *obj_slot;
+	GCObject *forwarded;
+	GCObject *copy;
+	GCObject *obj = *obj_slot;
 
 	SGEN_ASSERT (9, current_collection_generation == GENERATION_NURSERY, "calling minor-serial-copy from a %d generation collection", current_collection_generation);
 
@@ -78,7 +90,7 @@ SERIAL_COPY_OBJECT (void **obj_slot, SgenGrayQueue *queue)
 		return;
 	}
 	if (G_UNLIKELY (SGEN_OBJECT_IS_PINNED (obj))) {
-		SGEN_ASSERT (9, sgen_vtable_get_descriptor ((GCVTable*)SGEN_LOAD_VTABLE(obj)), "pinned object %p has no gc descriptor", obj);
+		SGEN_ASSERT (9, sgen_vtable_get_descriptor (SGEN_LOAD_VTABLE(obj)), "pinned object %p has no gc descriptor", obj);
 		SGEN_LOG (9, " (pinned, no change)");
 		HEAVY_STAT (++stat_nursery_copy_object_failed_pinned);
 		return;
@@ -86,7 +98,7 @@ SERIAL_COPY_OBJECT (void **obj_slot, SgenGrayQueue *queue)
 
 #ifndef SGEN_SIMPLE_NURSERY
 	if (sgen_nursery_is_to_space (obj)) {
-		SGEN_ASSERT (9, sgen_vtable_get_descriptor ((GCVTable*)SGEN_LOAD_VTABLE(obj)), "to space object %p has no gc descriptor", obj);
+		SGEN_ASSERT (9, sgen_vtable_get_descriptor (SGEN_LOAD_VTABLE(obj)), "to space object %p has no gc descriptor", obj);
 		SGEN_LOG (9, " (tospace, no change)");
 		HEAVY_STAT (++stat_nursery_copy_object_failed_to_space);		
 		return;
@@ -105,11 +117,11 @@ SERIAL_COPY_OBJECT (void **obj_slot, SgenGrayQueue *queue)
  *   Similar to SERIAL_COPY_OBJECT, but assumes that OBJ_SLOT is part of an object, so it handles global remsets as well.
  */
 static MONO_ALWAYS_INLINE void
-SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue) 
+SERIAL_COPY_OBJECT_FROM_OBJ (GCObject **obj_slot, SgenGrayQueue *queue)
 {
-	char *forwarded;
-	char *obj = *obj_slot;
-	void *copy;
+	GCObject *forwarded;
+	GCObject *obj = *obj_slot;
+	GCObject *copy;
 
 	SGEN_ASSERT (9, current_collection_generation == GENERATION_NURSERY, "calling minor-serial-copy-from-obj from a %d generation collection", current_collection_generation);
 
@@ -132,6 +144,10 @@ SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue)
 		SGEN_ASSERT (9, sgen_obj_get_descriptor (forwarded),  "forwarded object %p has no gc descriptor", forwarded);
 		SGEN_LOG (9, " (already forwarded to %p)", forwarded);
 		HEAVY_STAT (++stat_nursery_copy_object_failed_forwarded);
+#ifdef SGEN_CONCURRENT_MAJOR
+		/* See comment on STORE_STORE_FENCE below. */
+		STORE_STORE_FENCE;
+#endif
 		SGEN_UPDATE_REFERENCE (obj_slot, forwarded);
 #ifndef SGEN_SIMPLE_NURSERY
 		if (G_UNLIKELY (sgen_ptr_in_nursery (forwarded) && !sgen_ptr_in_nursery (obj_slot) && !SGEN_OBJECT_IS_CEMENTED (forwarded)))
@@ -140,7 +156,7 @@ SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue)
 		return;
 	}
 	if (G_UNLIKELY (SGEN_OBJECT_IS_PINNED (obj))) {
-		SGEN_ASSERT (9, sgen_vtable_get_descriptor ((GCVTable*)SGEN_LOAD_VTABLE(obj)), "pinned object %p has no gc descriptor", obj);
+		SGEN_ASSERT (9, sgen_vtable_get_descriptor (SGEN_LOAD_VTABLE(obj)), "pinned object %p has no gc descriptor", obj);
 		SGEN_LOG (9, " (pinned, no change)");
 		HEAVY_STAT (++stat_nursery_copy_object_failed_pinned);
 		if (!sgen_ptr_in_nursery (obj_slot) && !SGEN_OBJECT_IS_CEMENTED (obj))
@@ -151,7 +167,7 @@ SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue)
 #ifndef SGEN_SIMPLE_NURSERY
 	if (sgen_nursery_is_to_space (obj)) {
 		/* FIXME: all of these could just use `sgen_obj_get_descriptor_safe()` */
-		SGEN_ASSERT (9, sgen_vtable_get_descriptor ((GCVTable*)SGEN_LOAD_VTABLE(obj)), "to space object %p has no gc descriptor", obj);
+		SGEN_ASSERT (9, sgen_vtable_get_descriptor (SGEN_LOAD_VTABLE(obj)), "to space object %p has no gc descriptor", obj);
 		SGEN_LOG (9, " (tospace, no change)");
 		HEAVY_STAT (++stat_nursery_copy_object_failed_to_space);		
 
@@ -198,6 +214,16 @@ SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue)
 	HEAVY_STAT (++stat_objects_copied_nursery);
 
 	copy = copy_object_no_checks (obj, queue);
+#ifdef SGEN_CONCURRENT_MAJOR
+	/*
+	 * If an object is evacuated to the major heap and a reference to it, from the major
+	 * heap, updated, the concurrent major collector might follow that reference and
+	 * scan the new major object.  To make sure the object contents are seen by the
+	 * major collector we need this write barrier, so that the reference is seen after
+	 * the object.
+	 */
+	STORE_STORE_FENCE;
+#endif
 	SGEN_UPDATE_REFERENCE (obj_slot, copy);
 #ifndef SGEN_SIMPLE_NURSERY
 	if (G_UNLIKELY (sgen_ptr_in_nursery (copy) && !sgen_ptr_in_nursery (obj_slot) && !SGEN_OBJECT_IS_CEMENTED (copy)))
@@ -210,7 +236,3 @@ SERIAL_COPY_OBJECT_FROM_OBJ (void **obj_slot, SgenGrayQueue *queue)
 	}
 #endif
 }
-
-#define FILL_MINOR_COLLECTOR_COPY_OBJECT(collector)	do {			\
-		(collector)->serial_ops.copy_or_mark_object = SERIAL_COPY_OBJECT;			\
-	} while (0)

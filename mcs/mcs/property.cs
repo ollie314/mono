@@ -17,7 +17,7 @@ using System.Collections.Generic;
 using System.Text;
 using Mono.CompilerServices.SymbolWriter;
 
-#if NET_2_1
+#if MOBILE
 using XmlElement = System.Object;
 #endif
 
@@ -81,8 +81,6 @@ namespace Mono.CSharp
 				Report.Error (82, Location, "A member `{0}' is already reserved", conflict.GetSignatureForError ());
 			}
 		}
-
-		public abstract void PrepareEmit ();
 
 		protected override bool VerifyClsCompliance ()
 		{
@@ -619,8 +617,7 @@ namespace Mono.CSharp
 						GetSignatureForError ());
 				}
 			} else if ((ModFlags & Modifiers.OVERRIDE) == 0 && 
-				(Get == null && (Set.ModFlags & Modifiers.AccessibilityMask) != 0) ||
-				(Set == null && (Get.ModFlags & Modifiers.AccessibilityMask) != 0)) {
+				((Get == null && (Set.ModFlags & Modifiers.AccessibilityMask) != 0) || (Set == null && (Get.ModFlags & Modifiers.AccessibilityMask) != 0))) {
 				Report.Error (276, Location, 
 					      "`{0}': accessibility modifiers on accessors may only be used if the property or indexer has both a get and a set accessor",
 					      GetSignatureForError ());
@@ -904,7 +901,7 @@ namespace Mono.CSharp
 
 		public override void Emit ()
 		{
-			if ((AccessorFirst.ModFlags & (Modifiers.STATIC | Modifiers.COMPILER_GENERATED)) == Modifiers.COMPILER_GENERATED && Parent.PartialContainer.HasExplicitLayout) {
+			if ((AccessorFirst.ModFlags & (Modifiers.STATIC | Modifiers.AutoProperty)) == Modifiers.AutoProperty && Parent.PartialContainer.HasExplicitLayout) {
 				Report.Error (842, Location,
 					"Automatically implemented property `{0}' cannot be used inside a type with an explicit StructLayout attribute",
 					GetSignatureForError ());
@@ -1213,12 +1210,11 @@ namespace Mono.CSharp
 
 			backing_field = new Field (Parent,
 				new TypeExpression (MemberType, Location),
-				Modifiers.BACKING_FIELD | Modifiers.COMPILER_GENERATED | Modifiers.PRIVATE | (ModFlags & (Modifiers.STATIC | Modifiers.UNSAFE)),
+				Modifiers.BACKING_FIELD | Modifiers.COMPILER_GENERATED | Modifiers.DEBUGGER_HIDDEN | Modifiers.PRIVATE | (ModFlags & (Modifiers.STATIC | Modifiers.UNSAFE)),
 				MemberName, null);
 
 			Parent.PartialContainer.Members.Add (backing_field);
 			backing_field.Initializer = Initializer;
-			backing_field.ModFlags &= ~Modifiers.COMPILER_GENERATED;
 
 			// Call define because we passed fields definition
 			backing_field.Define ();
@@ -1452,6 +1448,8 @@ namespace Mono.CSharp
 
 		public override void PrepareEmit ()
 		{
+			base.PrepareEmit ();
+
 			add.PrepareEmit ();
 			remove.PrepareEmit ();
 
@@ -1761,9 +1759,8 @@ namespace Mono.CSharp
 
 		public override void PrepareEmit ()
 		{
-			parameters.ResolveDefaultValues (this);
-
 			base.PrepareEmit ();
+			parameters.ResolveDefaultValues (this);
 		}
 
 		protected override bool VerifyClsCompliance ()
