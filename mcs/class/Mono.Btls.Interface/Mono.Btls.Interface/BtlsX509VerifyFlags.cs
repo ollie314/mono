@@ -1,10 +1,10 @@
-//
-// IMonoTlsContext.cs
+﻿//
+// BtlsX509VerifyFlags.cs
 //
 // Author:
 //       Martin Baulig <martin.baulig@xamarin.com>
 //
-// Copyright (c) 2015 Xamarin, Inc.
+// Copyright (c) 2016 Xamarin Inc. (http://www.xamarin.com)
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,48 +24,15 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 using System;
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-
-namespace Mono.Security.Interface
+namespace Mono.Btls.Interface
 {
-	interface IMonoTlsContext : IDisposable
+	// Keep in sync with NativeBoringX509VerifyFlags
+	public enum BtlsX509VerifyFlags
 	{
-		bool IsServer {
-			get;
-		}
-
-		bool IsValid {
-			get;
-		}
-
-		void Initialize (IMonoTlsEventSink eventSink);
-
-		bool HasCredentials {
-			get;
-		}
-
-		void SetCertificate (X509Certificate certificate, AsymmetricAlgorithm privateKey);
-
-		int GenerateNextToken (IBufferOffsetSize incoming, out IBufferOffsetSize outgoing);
-
-		int EncryptMessage (ref IBufferOffsetSize incoming);
-
-		int DecryptMessage (ref IBufferOffsetSize incoming);
-
-		bool ReceivedCloseNotify {
-			get;
-		}
-
-		byte[] CreateCloseNotify ();
-
-		byte[] CreateHelloRequest ();
-
-		X509Certificate GetRemoteCertificate (out X509CertificateCollection remoteCertificateStore);
-
-		bool VerifyRemoteCertificate ();
-
-		MonoTlsConnectionInfo GetConnectionInfo ();
+		DEFAULT = 0,
+		CRL_CHECK = 1,
+		CRL_CHECK_ALL = 2,
+		X509_STRIC = 4
 	}
 }
 
