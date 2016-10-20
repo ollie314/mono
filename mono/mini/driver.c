@@ -1434,6 +1434,10 @@ mono_jit_parse_options (int argc, char * argv[])
 			
 			if (!mono_debugger_insert_breakpoint (argv [++i], FALSE))
 				fprintf (stderr, "Error: invalid method name '%s'\n", argv [i]);
+		} else if (strncmp (argv[i], "--gc-params=", 12) == 0) {
+			mono_gc_params_set (argv[i] + 12);
+		} else if (strncmp (argv[i], "--gc-debug=", 11) == 0) {
+			mono_gc_debug_set (argv[i] + 11);
 		} else if (strcmp (argv [i], "--llvm") == 0) {
 #ifndef MONO_ARCH_LLVM_SUPPORTED
 			fprintf (stderr, "Mono Warning: --llvm not supported on this platform.\n");
@@ -1679,6 +1683,10 @@ mono_main (int argc, char* argv[])
 			switch_gc (argv, "sgen");
 		} else if (strcmp (argv [i], "--gc=boehm") == 0) {
 			switch_gc (argv, "boehm");
+		} else if (strncmp (argv[i], "--gc-params=", 12) == 0) {
+			mono_gc_params_set (argv[i] + 12);
+		} else if (strncmp (argv[i], "--gc-debug=", 11) == 0) {
+			mono_gc_debug_set (argv[i] + 11);
 		}
 #ifdef TARGET_OSX
 		else if (strcmp (argv [i], "--arch=32") == 0) {
@@ -1745,11 +1753,11 @@ mono_main (int argc, char* argv[])
 		} else if (strcmp (argv [i], "--verify-all") == 0) {
 			mono_verifier_enable_verify_all ();
 		} else if (strcmp (argv [i], "--full-aot") == 0) {
-			mono_aot_only = TRUE;
+			mono_jit_set_aot_mode (MONO_AOT_MODE_FULL);
 		} else if (strcmp (argv [i], "--llvmonly") == 0) {
-			mono_aot_only = TRUE;
-			mono_llvm_only = TRUE;
+			mono_jit_set_aot_mode (MONO_AOT_MODE_LLVMONLY);
 		} else if (strcmp (argv [i], "--hybrid-aot") == 0) {
+			mono_jit_set_aot_mode (MONO_AOT_MODE_HYBRID);
 		} else if (strcmp (argv [i], "--print-vtable") == 0) {
 			mono_print_vtable = TRUE;
 		} else if (strcmp (argv [i], "--stats") == 0) {
@@ -1971,12 +1979,6 @@ mono_main (int argc, char* argv[])
 
 	/* Set rootdir before loading config */
 	mono_set_rootdir ();
-
-	/*
-	 * We only set the native name of the thread since MS.NET leaves the
-	 * managed thread name for the main thread as null.
-	 */
-	mono_native_thread_set_name (mono_native_thread_id_get (), "Main");
 
 	if (enable_profile) {
 		mono_profiler_load (profile_options);
@@ -2304,10 +2306,20 @@ mono_jit_set_aot_only (gboolean val)
 void
 mono_jit_set_aot_mode (MonoAotMode mode)
 {
+	/* we don't want to set mono_aot_mode twice */
+	g_assert (mono_aot_mode == MONO_AOT_MODE_NONE);
 	mono_aot_mode = mode;
+
 	if (mono_aot_mode == MONO_AOT_MODE_LLVMONLY) {
 		mono_aot_only = TRUE;
 		mono_llvm_only = TRUE;
+	}
+	if (mono_aot_mode == MONO_AOT_MODE_FULL) {
+		mono_aot_only = TRUE;
+	}
+	if (mono_aot_mode == MONO_AOT_MODE_HYBRID) {
+		mono_set_generic_sharing_vt_supported (TRUE);
+		mono_set_partial_sharing_supported (TRUE);
 	}
 }
 

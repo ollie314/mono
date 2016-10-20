@@ -3175,6 +3175,9 @@ init_backend (MonoBackend *backend)
 #ifdef MONO_ARCH_DYN_CALL_PARAM_AREA
 	backend->dyn_call_param_area = MONO_ARCH_DYN_CALL_PARAM_AREA;
 #endif
+#ifdef MONO_ARCH_NO_DIV_WITH_MUL
+	backend->disable_div_with_mul = 1;
+#endif
 }
 
 /*
@@ -4241,7 +4244,7 @@ mono_jit_compile_method_inner (MonoMethod *method, MonoDomain *target_domain, in
 
 	if (mono_aot_only) {
 		char *fullname = mono_method_full_name (method, TRUE);
-		mono_error_set_execution_engine (error, "Attempting to JIT compile method '%s' while running with --aot-only. See http://docs.xamarin.com/ios/about/limitations for more information.\n", fullname);
+		mono_error_set_execution_engine (error, "Attempting to JIT compile method '%s' while running in aot-only mode. See https://developer.xamarin.com/guides/ios/advanced_topics/limitations/ for more information.\n", fullname);
 		g_free (fullname);
 
 		return NULL;

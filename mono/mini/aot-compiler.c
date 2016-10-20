@@ -3844,13 +3844,14 @@ add_wrappers (MonoAotCompile *acfg)
 		csig->params [1] = &mono_defaults.exception_class->byval_arg;
 		add_method (acfg, get_runtime_invoke_sig (csig));
 
-		/* Assembly runtime-invoke (string, bool) [DoAssemblyResolve] */
-		csig = mono_metadata_signature_alloc (mono_defaults.corlib, 2);
+		/* Assembly runtime-invoke (string, Assembly, bool) [DoAssemblyResolve] */
+		csig = mono_metadata_signature_alloc (mono_defaults.corlib, 3);
 		csig->hasthis = 1;
 		csig->ret = &(mono_class_load_from_name (
 											mono_defaults.corlib, "System.Reflection", "Assembly"))->byval_arg;
 		csig->params [0] = &mono_defaults.string_class->byval_arg;
-		csig->params [1] = &mono_defaults.boolean_class->byval_arg;
+		csig->params [1] = &(mono_class_load_from_name (mono_defaults.corlib, "System.Reflection", "Assembly"))->byval_arg;
+		csig->params [2] = &mono_defaults.boolean_class->byval_arg;
 		add_method (acfg, get_runtime_invoke_sig (csig));
 
 		/* runtime-invoke used by finalizers */
@@ -9813,7 +9814,7 @@ compile_methods (MonoAotCompile *acfg)
 			user_data [1] = acfg;
 			user_data [2] = frag;
 			
-			handle = mono_threads_create_thread (compile_thread_main, (gpointer) user_data, 0, NULL);
+			handle = mono_threads_create_thread (compile_thread_main, (gpointer) user_data, NULL, NULL);
 			g_ptr_array_add (threads, handle);
 		}
 		g_free (methods);
@@ -10427,38 +10428,27 @@ mono_compile_assembly (MonoAssembly *ass, guint32 opts, const char *aot_options)
 	//acfg->aot_opts.print_skipped_methods = TRUE;
 
 #if !defined(MONO_ARCH_GSHAREDVT_SUPPORTED)
-	if (opts & MONO_OPT_GSHAREDVT) {
+	if (acfg->opts & MONO_OPT_GSHAREDVT) {
 		aot_printerrf (acfg, "-O=gsharedvt not supported on this platform.\n");
 		return 1;
 	}
-#endif
-
-#if !defined(MONO_ARCH_GSHAREDVT_SUPPORTED)
-	if (!acfg->aot_opts.llvm_only && (opts & MONO_OPT_GSHAREDVT)) {
-		aot_printerrf (acfg, "-O=gsharedvt not supported on this platform.\n");
-		return 1;
-	}
-#endif
-
 	if (acfg->aot_opts.llvm_only) {
-#ifndef MONO_ARCH_GSHAREDVT_SUPPORTED
 		aot_printerrf (acfg, "--aot=llvmonly requires a runtime that supports gsharedvt.\n");
 		return 1;
+	}
+#else
+	if (acfg->aot_opts.llvm_only || mono_aot_mode_is_full (&acfg->aot_opts) || mono_aot_mode_is_hybrid (&acfg->aot_opts))
+		acfg->opts |= MONO_OPT_GSHAREDVT;
 #endif
-#ifndef ENABLE_LLVM
+
+#if !defined(ENABLE_LLVM)
+	if (acfg->aot_opts.llvm_only) {
 		aot_printerrf (acfg, "--aot=llvmonly requires a runtime compiled with llvm support.\n");
 		return 1;
-#endif
-	}
-
-#if defined(MONO_ARCH_GSHAREDVT_SUPPORTED)
-	if (acfg->aot_opts.llvm_only || mono_aot_mode_is_full (&acfg->aot_opts) || mono_aot_mode_is_hybrid (&acfg->aot_opts)) {
-		acfg->opts |= MONO_OPT_GSHAREDVT;
-		opts |= MONO_OPT_GSHAREDVT;
 	}
 #endif
 
-	if (opts & MONO_OPT_GSHAREDVT)
+	if (acfg->opts & MONO_OPT_GSHAREDVT)
 		mono_set_generic_sharing_vt_supported (TRUE);
 
 	aot_printf (acfg, "Mono Ahead of Time compiler - compiling assembly %s\n", image->name);
@@ -10583,7 +10573,7 @@ mono_compile_assembly (MonoAssembly *ass, guint32 opts, const char *aot_options)
 
 	acfg->method_index = 1;
 
-	if (mono_aot_mode_is_full (&acfg->aot_opts))
+	if (mono_aot_mode_is_full (&acfg->aot_opts) || mono_aot_mode_is_hybrid (&acfg->aot_opts))
 		mono_set_partial_sharing_supported (TRUE);
 
 	res = collect_methods (acfg);
